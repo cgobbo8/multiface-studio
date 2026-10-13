@@ -4,10 +4,14 @@ import numpy
 
 from facefusion import state_manager
 from facefusion.face_analyser import get_many_faces, get_one_face
+from facefusion.face_mapper import select_mapped_faces
 from facefusion.types import Face, FaceSelectorOrder, Gender, Race, Score, VisionFrame
 
 
 def select_faces(reference_vision_frame : VisionFrame, target_vision_frame : VisionFrame) -> List[Face]:
+	if state_manager.get_item('face_selector_mode') == 'mapping':
+		return [ target_face for target_face, _ in select_mapped_faces(target_vision_frame) ]
+
 	target_faces = get_many_faces([ target_vision_frame ])
 
 	if state_manager.get_item('face_selector_mode') == 'many':

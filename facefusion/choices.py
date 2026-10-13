@@ -14,7 +14,7 @@ face_detector_set : FaceDetectorSet =\
 }
 face_detector_models : List[FaceDetectorModel] = list(get_args(FaceDetectorModel))
 face_landmarker_models : List[FaceLandmarkerModel] = list(get_args(FaceLandmarkerModel))
-face_selector_modes : List[FaceSelectorMode] = list(get_args(FaceSelectorMode))
+face_selector_modes : List[FaceSelectorMode] = [ face_selector_mode for face_selector_mode in get_args(FaceSelectorMode) if face_selector_mode != 'mapping' ]
 face_selector_orders : List[FaceSelectorOrder] = list(get_args(FaceSelectorOrder))
 face_selector_genders : List[Gender] = list(get_args(Gender))
 face_selector_races : List[Race] = list(get_args(Race))

@@ -13,6 +13,7 @@ from facefusion.common_helper import get_first, is_macos
 from facefusion.download import conditional_download_hashes, conditional_download_sources, resolve_download_url
 from facefusion.execution import has_execution_provider
 from facefusion.face_analyser import get_average_face, get_many_faces, get_one_face, scale_face
+from facefusion.face_mapper import get_face_mapping_source_face, get_face_mapping_source_frame, has_face_mapping_source, select_mapped_faces
 from facefusion.face_helper import paste_back, warp_face_by_face_landmark_5
 from facefusion.face_masker import create_area_mask, create_box_mask, create_occlusion_mask, create_region_mask
 from facefusion.face_selector import select_faces, sort_faces_by_order
@@ -535,17 +536,22 @@ def pre_check() -> bool:
 
 
 def pre_process(mode : ProcessMode) -> bool:
-	if not has_image(state_manager.get_item('source_paths')):
-		logger.error(translator.get('choose_image_source') + translator.get('exclamation_mark'), __name__)
-		return False
+	if state_manager.get_item('face_selector_mode') == 'mapping':
+		if not has_face_mapping_source():
+			logger.error(translator.get('no_source_face_detected') + translator.get('exclamation_mark'), __name__)
+			return False
+	else:
+		if not has_image(state_manager.get_item('source_paths')):
+			logger.error(translator.get('choose_image_source') + translator.get('exclamation_mark'), __name__)
+			return False
 
-	source_image_paths = filter_image_paths(state_manager.get_item('source_paths'))
-	source_frames = read_static_images(source_image_paths)
-	source_faces = get_many_faces(source_frames)
+		source_image_paths = filter_image_paths(state_manager.get_item('source_paths'))
+		source_frames = read_static_images(source_image_paths)
+		source_faces = get_many_faces(source_frames)
 
-	if not get_one_face(source_faces):
-		logger.error(translator.get('no_source_face_detected') + translator.get('exclamation_mark'), __name__)
-		return False
+		if not get_one_face(source_faces):
+			logger.error(translator.get('no_source_face_detected') + translator.get('exclamation_mark'), __name__)
+			return False
 
 	if mode in [ 'output', 'preview' ] and not is_image(state_manager.get_item('target_path')) and not is_video(state_manager.get_item('target_path')):
 		logger.error(translator.get('choose_image_or_video_target') + translator.get('exclamation_mark'), __name__)
@@ -578,7 +584,7 @@ def post_process() -> None:
 		face_recognizer.clear_inference_pool()
 
 
-def swap_face(source_face : Face, target_face : Face, temp_vision_frame : VisionFrame) -> VisionFrame:
+def swap_face(source_face : Face, target_face : Face, temp_vision_frame : VisionFrame, source_vision_frame : Optional[VisionFrame] = None) -> VisionFrame:
 	model_template = get_model_options().get('template')
 	model_size = get_model_options().get('size')
 	pixel_boost_size = unpack_resolution(state_manager.get_item('face_swapper_pixel_boost'))
@@ -598,7 +604,7 @@ def swap_face(source_face : Face, target_face : Face, temp_vision_frame : Vision
 	pixel_boost_vision_frames = implode_pixel_boost(crop_vision_frame, pixel_boost_total, model_size)
 	for pixel_boost_vision_frame in pixel_boost_vision_frames:
 		pixel_boost_vision_frame = prepare_crop_frame(pixel_boost_vision_frame)
-		pixel_boost_vision_frame = forward_swap_face(source_face, target_face, pixel_boost_vision_frame)
+		pixel_boost_vision_frame = forward_swap_face(source_face, target_face, pixel_boost_vision_frame, source_vision_frame)
 		pixel_boost_vision_frame = normalize_crop_frame(pixel_boost_vision_frame)
 		temp_vision_frames.append(pixel_boost_vision_frame)
 	crop_vision_frame = explode_pixel_boost(temp_vision_frames, pixel_boost_total, model_size, pixel_boost_size)
@@ -617,7 +623,7 @@ def swap_face(source_face : Face, target_face : Face, temp_vision_frame : Vision
 	return paste_vision_frame
 
 
-def forward_swap_face(source_face : Face, target_face : Face, crop_vision_frame : VisionFrame) -> VisionFrame:
+def forward_swap_face(source_face : Face, target_face : Face, crop_vision_frame : VisionFrame, source_vision_frame : Optional[VisionFrame] = None) -> VisionFrame:
 	face_swapper = get_inference_pool().get('face_swapper')
 	model_type = get_model_options().get('type')
 	face_swapper_inputs = {}
@@ -628,7 +634,7 @@ def forward_swap_face(source_face : Face, target_face : Face, crop_vision_frame 
 	for face_swapper_input in face_swapper.get_inputs():
 		if face_swapper_input.name == 'source':
 			if model_type in [ 'blendswap', 'uniface' ]:
-				face_swapper_inputs[face_swapper_input.name] = prepare_source_frame(source_face)
+				face_swapper_inputs[face_swapper_input.name] = prepare_source_frame(source_face, source_vision_frame)
 			else:
 				source_embedding = prepare_source_embedding(source_face)
 				source_embedding = balance_source_embedding(source_embedding, target_face.embedding)
@@ -654,9 +660,11 @@ def forward_convert_embedding(face_embedding : Embedding) -> Embedding:
 	return face_embedding
 
 
-def prepare_source_frame(source_face : Face) -> VisionFrame:
+def prepare_source_frame(source_face : Face, source_vision_frame : Optional[VisionFrame] = None) -> VisionFrame:
 	model_type = get_model_options().get('type')
-	source_vision_frame = read_static_image(get_first(state_manager.get_item('source_paths')))
+
+	if source_vision_frame is None:
+		source_vision_frame = read_static_image(get_first(state_manager.get_item('source_paths')))
 
 	if model_type == 'blendswap':
 		source_vision_frame, _ = warp_face_by_face_landmark_5(source_vision_frame, source_face.landmark_set.get('5/68'), 'arcface_112_v2', (112, 112))
@@ -763,6 +771,16 @@ def process_frame(inputs : FaceSwapperInputs) -> ProcessorOutputs:
 	target_vision_frame = inputs.get('target_vision_frame')
 	temp_vision_frame = inputs.get('temp_vision_frame')
 	temp_vision_mask = inputs.get('temp_vision_mask')
+
+	if state_manager.get_item('face_selector_mode') == 'mapping':
+		for target_face, face_mapping in select_mapped_faces(target_vision_frame):
+			source_face = get_face_mapping_source_face(face_mapping)
+
+			if source_face:
+				target_face = scale_face(target_face, target_vision_frame, temp_vision_frame)
+				temp_vision_frame = swap_face(source_face, target_face, temp_vision_frame, get_face_mapping_source_frame(face_mapping))
+		return temp_vision_frame, temp_vision_mask
+
 	source_face = extract_source_face(source_vision_frames)
 	target_faces = select_faces(reference_vision_frame, target_vision_frame)
 

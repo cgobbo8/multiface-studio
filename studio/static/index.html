@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="fr">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>MultiFace Studio</title>
+	<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%230A84FF'/%3E%3Cstop offset='1' stop-color='%23BF5AF2'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='15' fill='url(%23g)'/%3E%3Ccircle cx='24' cy='28' r='9' fill='white' fill-opacity='.9'/%3E%3Ccircle cx='41' cy='36' r='9' fill='white' fill-opacity='.55'/%3E%3C/svg%3E">
+	<link rel="stylesheet" href="app.css">
+</head>
+<body>
+	<div class="wallpaper" aria-hidden="true">
+		<span class="orb orb-a"></span>
+		<span class="orb orb-b"></span>
+		<span class="orb orb-c"></span>
+		<span class="orb orb-d"></span>
+	</div>
+
+	<header class="toolbar glass">
+		<div class="toolbar-leading">
+			<div class="app-icon" aria-hidden="true">
+				<svg viewBox="0 0 64 64"><defs><linearGradient id="appicon" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0A84FF"/><stop offset="1" stop-color="#BF5AF2"/></linearGradient></defs><rect width="64" height="64" rx="15" fill="url(#appicon)"/><circle cx="24" cy="28" r="9" fill="#fff" fill-opacity=".92"/><circle cx="41" cy="36" r="9" fill="#fff" fill-opacity=".55"/></svg>
+			</div>
+			<div class="app-title">
+				<strong>MultiFace Studio</strong>
+				<span id="target-caption">Propulsé par FaceFusion</span>
+			</div>
+		</div>
+		<div class="toolbar-trailing">
+			<button class="button button-plain" id="open-target" title="Ouvrir une photo ou une vidéo">
+				<svg class="icon" viewBox="0 0 24 24"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h3l2 2h6A2.5 2.5 0 0 1 20 9.5v7a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5z"/></svg>
+				<span class="label-wide">Ouvrir</span>
+			</button>
+			<button class="button button-plain" id="open-settings" title="Réglages">
+				<svg class="icon" viewBox="0 0 24 24"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z"/><path d="M19.4 13.5a7.7 7.7 0 0 0 0-3l2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A7.6 7.6 0 0 0 7 6.5l-2.4-1-2 3.4 2 1.6a7.7 7.7 0 0 0 0 3l-2 1.6 2 3.4 2.4-1a7.6 7.6 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a7.6 7.6 0 0 0 2.6-1.5l2.4 1 2-3.4z"/></svg>
+				<span class="label-wide">Réglages</span>
+			</button>
+			<button class="button button-primary" id="render" disabled>
+				<svg class="icon" viewBox="0 0 24 24"><path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6zM18.5 14l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8zM6 15l.6 1.4L8 17l-1.4.6L6 19l-.6-1.4L4 17l1.4-.6z"/></svg>
+				<span id="render-label">Générer</span>
+			</button>
+		</div>
+	</header>
+
+	<main class="workspace" id="workspace">
+		<section class="stage">
+			<div class="card glass viewer" id="viewer">
+				<div class="viewer-header">
+					<div class="segmented" id="mode-control" role="tablist">
+						<span class="segmented-thumb"></span>
+						<button role="tab" data-mode="original" class="is-active">Original</button>
+						<button role="tab" data-mode="result">Aperçu</button>
+						<button role="tab" data-mode="compare">Comparer</button>
+					</div>
+					<div class="viewer-hint" id="viewer-hint"></div>
+				</div>
+
+				<div class="canvas" id="canvas">
+					<div class="dropzone" id="dropzone">
+						<div class="dropzone-icon">
+							<svg viewBox="0 0 48 48"><rect x="6" y="10" width="36" height="28" rx="7"/><circle cx="18" cy="21" r="4"/><path d="M8 34l10-9 7 6 6-5 11 9"/></svg>
+						</div>
+						<h1>Déposez une photo ou une vidéo</h1>
+						<p>Tous les visages seront détectés. Vous choisirez ensuite un nouveau visage pour chacun, et tout sera généré en une seule fois.</p>
+						<button class="button button-primary button-large" id="pick-target">Choisir un fichier</button>
+					</div>
+
+					<figure class="frame" id="frame" hidden>
+						<img id="frame-original" alt="Image cible" draggable="false">
+						<img id="frame-result" alt="Aperçu" draggable="false" hidden>
+						<div class="face-layer" id="face-layer"></div>
+						<div class="compare-handle" id="compare-handle" hidden><span></span></div>
+						<div class="frame-spinner" id="frame-spinner" hidden><span class="spinner"></span></div>
+					</figure>
+				</div>
+
+				<div class="timeline" id="timeline" hidden>
+					<div class="timeline-row">
+						<button class="icon-button" id="step-back" title="Image précédente (←)"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+						<div class="scrubber">
+							<div class="scrubber-trim" id="scrubber-trim"></div>
+							<input type="range" id="scrubber" min="0" max="0" value="0" step="1" aria-label="Position dans la vidéo">
+						</div>
+						<button class="icon-button" id="step-forward" title="Image suivante (→)"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+					</div>
+					<div class="timeline-row timeline-meta">
+						<span class="timecode" id="timecode">00:00.00</span>
+						<div class="timeline-actions">
+							<button class="chip" id="trim-start" title="Commencer le rendu ici">⟦ Début ici</button>
+							<button class="chip" id="trim-end" title="Arrêter le rendu ici">Fin ici ⟧</button>
+							<button class="chip chip-quiet" id="trim-reset" hidden>Réinitialiser</button>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<div class="card glass library" id="library">
+				<div class="library-header">
+					<div>
+						<h2>Visages sources</h2>
+						<p>Glissez-les sur une personne, ou sélectionnez-en un puis touchez une personne.</p>
+					</div>
+					<button class="button button-tinted" id="add-sources">
+						<svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+						Ajouter
+					</button>
+				</div>
+				<div class="library-strip" id="library-strip"></div>
+			</div>
+		</section>
+
+		<aside class="card glass people" id="people">
+			<div class="people-header">
+				<div>
+					<h2>Personnes <span class="count" id="people-count">0</span></h2>
+					<p id="people-subtitle">Ajoutez une cible pour commencer.</p>
+				</div>
+				<div class="people-actions">
+					<button class="button button-tinted button-small" id="scan-frame" disabled title="Ajouter les visages visibles sur cette image">
+						<svg class="icon" viewBox="0 0 24 24"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="11" r="3"/><path d="M7.5 17a5 5 0 0 1 9 0"/></svg>
+						<span>Cette image</span>
+					</button>
+					<button class="button button-tinted button-small" id="scan-video" hidden title="Parcourir toute la vidéo pour trouver chaque personne">
+						<svg class="icon" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="3"/><path d="M16 10.5l5-3v9l-5-3"/></svg>
+						<span>Toute la vidéo</span>
+					</button>
+				</div>
+			</div>
+			<div class="scan-progress" id="scan-progress" hidden>
+				<div class="progress-track"><span id="scan-bar"></span></div>
+				<div class="scan-progress-meta"><span id="scan-text">Analyse…</span><button class="link-button" id="scan-cancel">Annuler</button></div>
+			</div>
+			<ol class="people-list" id="people-list"></ol>
+			<div class="people-empty" id="people-empty">
+				<svg viewBox="0 0 48 48"><circle cx="24" cy="18" r="8"/><path d="M10 40a14 14 0 0 1 28 0"/></svg>
+				<span>Aucun visage pour l’instant</span>
+			</div>
+			<div class="people-footer" id="people-footer" hidden>
+				<button class="link-button" id="assign-order">Répartir les sources dans l’ordre</button>
+				<button class="link-button link-danger" id="clear-sources">Tout retirer</button>
+			</div>
+		</aside>
+	</main>
+
+	<div class="sheet-backdrop" id="settings-backdrop" hidden></div>
+	<aside class="inspector glass" id="settings" aria-hidden="true">
+		<div class="inspector-header">
+			<h2>Réglages</h2>
+			<button class="icon-button" id="close-settings" title="Fermer (Échap)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+		</div>
+		<div class="inspector-body" id="settings-body"></div>
+	</aside>
+
+	<div class="hud-backdrop" id="hud" hidden>
+		<div class="hud glass">
+			<div class="ring" id="hud-ring-box">
+				<svg viewBox="0 0 120 120"><circle class="ring-track" cx="60" cy="60" r="52"/><circle class="ring-value" id="hud-ring" cx="60" cy="60" r="52"/></svg>
+				<span id="hud-percent">0%</span>
+			</div>
+			<h3 id="hud-stage">Préparation</h3>
+			<p id="hud-message"></p>
+			<button class="button button-plain" id="hud-cancel">Annuler</button>
+		</div>
+	</div>
+
+	<div class="hud-backdrop" id="result" hidden>
+		<div class="result glass">
+			<div class="result-header">
+				<div>
+					<h2>C’est prêt ✨</h2>
+					<p id="result-name"></p>
+				</div>
+				<button class="icon-button" id="close-result" title="Fermer"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+			</div>
+			<div class="result-media" id="result-media"></div>
+			<div class="result-actions">
+				<button class="button button-plain" id="reveal-result">
+					<svg class="icon" viewBox="0 0 24 24"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h3l2 2h6A2.5 2.5 0 0 1 20 9.5v7a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5z"/></svg>
+					<span id="reveal-label">Afficher dans le dossier</span>
+				</button>
+				<a class="button button-primary" id="download-result" download>
+					<svg class="icon" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>
+					Télécharger
+				</a>
+			</div>
+		</div>
+	</div>
+
+	<div class="download-card glass" id="download-card" role="status" hidden>
+		<div class="download-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v8M8.5 12.5 12 16l3.5-3.5"/></svg></div>
+		<div class="download-body">
+			<div class="download-line"><strong>Téléchargement du modèle</strong><span id="download-percent">0 %</span></div>
+			<span class="download-name" id="download-name"></span>
+			<div class="progress-track"><span id="download-bar"></span></div>
+			<span class="download-size" id="download-size"></span>
+		</div>
+	</div>
+
+	<div class="offline glass" id="offline" role="alert" hidden>
+		<span class="offline-dot"></span>
+		<div>
+			<strong>Le serveur est arrêté</strong>
+			<span>Relancez MultiFace Studio (depuis Pinokio ou son lanceur) : la page se reconnecte toute seule.</span>
+		</div>
+		<button class="button button-plain button-small" id="offline-retry">Réessayer</button>
+	</div>
+
+	<div class="drop-overlay" id="drop-overlay" hidden><div class="drop-overlay-inner"><span id="drop-overlay-text">Déposer ici</span></div></div>
+	<div class="toasts" id="toasts" aria-live="polite"></div>
+
+	<input type="file" id="target-input" accept="image/*,video/*" hidden>
+	<input type="file" id="sources-input" accept="image/*" multiple hidden>
+	<input type="file" id="slot-input" accept="image/*" hidden>
+
+	<script src="app.js"></script>
+</body>
+</html>

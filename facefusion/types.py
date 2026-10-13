@@ -45,6 +45,11 @@ Face = namedtuple('Face',
 	'race'
 ])
 FaceSet : TypeAlias = Dict[str, List[Face]]
+FaceMapping = TypedDict('FaceMapping',
+{
+	'reference_embeddings' : List[Embedding],
+	'source_paths' : List[str]
+})
 FaceStore = TypedDict('FaceStore',
 {
 	'static_faces' : FaceSet
@@ -118,7 +123,7 @@ TableContent : TypeAlias = Any
 FaceDetectorModel = Literal['many', 'retinaface', 'scrfd', 'yolo_face', 'yunet']
 FaceLandmarkerModel = Literal['many', '2dfan4', 'peppa_wutz']
 FaceDetectorSet : TypeAlias = Dict[FaceDetectorModel, List[str]]
-FaceSelectorMode = Literal['many', 'one', 'reference']
+FaceSelectorMode = Literal['many', 'one', 'reference', 'mapping']
 FaceSelectorOrder = Literal['left-right', 'right-left', 'top-bottom', 'bottom-top', 'small-large', 'large-small', 'best-worst', 'worst-best']
 FaceOccluderModel = Literal['many', 'xseg_1', 'xseg_2', 'xseg_3']
 FaceParserModel = Literal['bisenet_resnet_18', 'bisenet_resnet_34']
@@ -290,6 +295,7 @@ StateKey = Literal\
 	'reference_face_position',
 	'reference_face_distance',
 	'reference_frame_number',
+	'face_mappings',
 	'face_occluder_model',
 	'face_parser_model',
 	'face_mask_types',
@@ -360,6 +366,7 @@ State = TypedDict('State',
 	'reference_face_position' : int,
 	'reference_face_distance' : float,
 	'reference_frame_number' : int,
+	'face_mappings' : List[FaceMapping],
 	'face_occluder_model' : FaceOccluderModel,
 	'face_parser_model' : FaceParserModel,
 	'face_mask_types' : List[FaceMaskType],
