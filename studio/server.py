@@ -113,6 +113,7 @@ TASK : Dict[str, Any] =\
 	'progress': 0.0,
 	'stage': '',
 	'message': '',
+	'message_params': {},
 	'result': None,
 	'cancel': False
 }
@@ -181,10 +182,10 @@ def init_engine() -> None:
 
 
 def run_setup() -> Dict[str, Any]:
-	TASK['stage'] = 'Préparation des modèles'
+	TASK['stage'] = 'stage.models'
 
 	if not ensure_models(collect_wanted_processors()):
-		raise TaskError('Impossible de télécharger les modèles de base (connexion internet ?).')
+		raise TaskError('error.base_models_download')
 	return {}
 
 
@@ -506,7 +507,7 @@ def save_upload(upload : UploadFile, folder : Path) -> Path:
 
 def ensure_idle() -> None:
 	if TASK.get('status') == 'running':
-		raise HTTPException(409, 'Une tâche est déjà en cours.')
+		raise HTTPException(409, 'error.task_running')
 
 
 # ---------------------------------------------------------------- tasks
@@ -521,6 +522,7 @@ def start_task(kind : str, runner : Callable[[], Optional[Dict[str, Any]]]) -> D
 		'progress': 0.0,
 		'stage': '',
 		'message': '',
+		'message_params': {},
 		'result': None,
 		'cancel': False
 	})
@@ -531,14 +533,14 @@ def start_task(kind : str, runner : Callable[[], Optional[Dict[str, Any]]]) -> D
 				result = runner()
 
 				if TASK.get('cancel'):
-					TASK.update({ 'status': 'cancelled', 'stage': 'Annulé' })
+					TASK.update({ 'status': 'cancelled', 'stage': 'stage.cancelled' })
 				else:
 					TASK.update({ 'status': 'done', 'progress': 1.0, 'result': result })
 			except TaskError as exception:
-				TASK.update({ 'status': 'error', 'message': str(exception) })
+				TASK.update({ 'status': 'error', 'message': str(exception), 'message_params': {} })
 			except Exception as exception:
 				logger.error(repr(exception), __name__)
-				TASK.update({ 'status': 'error', 'message': 'Erreur inattendue : ' + str(exception) })
+				TASK.update({ 'status': 'error', 'message': 'error.unexpected', 'message_params': { 'detail': str(exception) } })
 
 	threading.Thread(target = run, daemon = True).start()
 	return serialize_task()
@@ -548,12 +550,17 @@ class TaskError(Exception):
 	pass
 
 
+# the interface translates keys and fills in the values, so the server stays language neutral
+def set_task_message(key : str, **params : Any) -> None:
+	TASK.update({ 'message': key, 'message_params': params })
+
+
 def run_video_scan(samples : int) -> Dict[str, Any]:
 	target = SESSION.get('target')
 	frame_start, frame_end = resolve_trim()
 	frame_numbers = sorted(set(numpy.linspace(frame_start, max(frame_start, frame_end - 1), samples).astype(int).tolist()))
 	created_total = 0
-	TASK['stage'] = 'Analyse des visages'
+	TASK['stage'] = 'stage.scan'
 
 	for index, frame_number in enumerate(frame_numbers):
 		if TASK.get('cancel'):
@@ -563,7 +570,7 @@ def run_video_scan(samples : int) -> Dict[str, Any]:
 		if vision_frame is not None:
 			created_total += merge_faces_into_people(vision_frame, get_many_faces([ vision_frame ]), frame_number)
 		TASK['progress'] = (index + 1) / len(frame_numbers)
-		TASK['message'] = str(len(SESSION.get('people'))) + ' personne(s) trouvée(s)'
+		set_task_message('message.people_found', count = len(SESSION.get('people')))
 
 	SESSION['people'].sort(key = lambda person: person.get('count'), reverse = True)
 	apply_settings()
@@ -587,7 +594,7 @@ def run_render() -> Dict[str, Any]:
 	output_path = OUTPUT_PATH / output_name
 	OUTPUT_PATH.mkdir(parents = True, exist_ok = True)
 
-	TASK['stage'] = 'Vérification des modèles'
+	TASK['stage'] = 'stage.checking'
 	apply_settings()
 	state_manager.set_item('target_path', str(target_path))
 	state_manager.set_item('output_path', str(output_path))
@@ -602,19 +609,19 @@ def run_render() -> Dict[str, Any]:
 		state_manager.set_item('trim_frame_end', None)
 
 	if not ensure_models():
-		raise TaskError('Impossible de télécharger les modèles nécessaires (connexion internet ?).')
+		raise TaskError('error.models_download')
 
-	TASK['stage'] = 'Préparation'
+	TASK['stage'] = 'stage.preparing'
 	error_code = conditional_process()
 
 	if error_code == 2:
-		raise TaskError('Aucune source valide : ajoutez au moins un visage net ou une image.')
+		raise TaskError('error.no_valid_source')
 	if error_code == 3:
-		raise TaskError('Le contenu a été refusé par l\'analyseur de contenu de FaceFusion.')
+		raise TaskError('error.content_refused')
 	if error_code == 4 or TASK.get('cancel'):
 		return {}
 	if error_code > 0 or not output_path.is_file():
-		raise TaskError('Le rendu a échoué, consultez le terminal pour les détails.')
+		raise TaskError('error.render_failed')
 
 	SESSION['output'] =\
 	{
@@ -646,17 +653,17 @@ def install_progress_hooks() -> None:
 		frame_counter['done'] = 0
 		frame_counter['total'] = max(1, len(resolve_temp_frame_paths(state_manager.get_item('target_path'))))
 		analyse_counter['done'] = 0
-		TASK['stage'] = 'Remplacement des visages'
+		TASK['stage'] = 'stage.swap'
 		return original_process_video()
 
 	def process_temp_frame(temp_frame_path : str, frame_number : int) -> bool:
 		result = original_process_temp_frame(temp_frame_path, frame_number)
 
 		with frame_counter_lock:
-			TASK['stage'] = 'Remplacement des visages'
+			TASK['stage'] = 'stage.swap'
 			frame_counter['done'] += 1
 			TASK['progress'] = 0.1 + 0.8 * frame_counter.get('done') / frame_counter.get('total')
-			TASK['message'] = str(frame_counter.get('done')) + ' / ' + str(frame_counter.get('total')) + ' images'
+			set_task_message('message.frames', done = frame_counter.get('done'), total = frame_counter.get('total'))
 		return result
 
 	original_analyse_track_frame = face_mapper.analyse_track_frame
@@ -668,22 +675,22 @@ def install_progress_hooks() -> None:
 		# the tracking pass reads the whole video before any frame gets rendered
 		with frame_counter_lock:
 			analyse_counter['done'] += 1
-			TASK['stage'] = 'Suivi des visages'
+			TASK['stage'] = 'stage.track'
 			TASK['progress'] = max(TASK.get('progress'), 0.03 + 0.07 * min(1.0, analyse_counter.get('done') / frame_counter.get('total')))
-			TASK['message'] = str(min(analyse_counter.get('done'), frame_counter.get('total'))) + ' / ' + str(frame_counter.get('total')) + ' images analysées'
+			set_task_message('message.frames_analysed', done = min(analyse_counter.get('done'), frame_counter.get('total')), total = frame_counter.get('total'))
 		return result
 
 	image_to_video.process_video = process_video
 	image_to_video.process_temp_frame = process_temp_frame
 	face_mapper.analyse_track_frame = analyse_track_frame
-	wrap_stage(image_to_video, 'setup', 'Analyse du contenu', 0.0)
-	wrap_stage(image_to_video, 'extract_frames', 'Extraction des images', 0.03)
-	wrap_stage(image_to_video, 'merge_frames', 'Assemblage de la vidéo', 0.9)
-	wrap_stage(image_to_video, 'restore_audio', 'Restauration de l\'audio', 0.96)
-	wrap_stage(image_to_image, 'setup', 'Analyse du contenu', 0.0)
-	wrap_stage(image_to_image, 'prepare_image', 'Préparation', 0.1)
-	wrap_stage(image_to_image, 'process_image', 'Remplacement des visages', 0.2)
-	wrap_stage(image_to_image, 'finalize_image', 'Finalisation', 0.9)
+	wrap_stage(image_to_video, 'setup', 'stage.content', 0.0)
+	wrap_stage(image_to_video, 'extract_frames', 'stage.extract', 0.03)
+	wrap_stage(image_to_video, 'merge_frames', 'stage.merge', 0.9)
+	wrap_stage(image_to_video, 'restore_audio', 'stage.audio', 0.96)
+	wrap_stage(image_to_image, 'setup', 'stage.content', 0.0)
+	wrap_stage(image_to_image, 'prepare_image', 'stage.preparing', 0.1)
+	wrap_stage(image_to_image, 'process_image', 'stage.swap', 0.2)
+	wrap_stage(image_to_image, 'finalize_image', 'stage.finalize', 0.9)
 
 
 # ---------------------------------------------------------------- api
@@ -748,7 +755,7 @@ def upload_target(file : UploadFile = File(...)) -> Dict[str, Any]:
 			target = { 'type': 'video', 'frame_total': count_video_frame_total(str(target_path)), 'fps': detect_video_fps(str(target_path)) }
 		else:
 			target_path.unlink(missing_ok = True)
-			raise HTTPException(415, 'Format non supporté. Utilisez une photo (jpg, png, webp…) ou une vidéo (mp4, mov…).')
+			raise HTTPException(415, 'error.unsupported_format')
 
 		target.update(
 		{
@@ -773,7 +780,7 @@ def get_frame(frame_number : int = 0, max_size : int = 1920) -> Response:
 	vision_frame = read_target_frame(frame_number)
 
 	if vision_frame is None:
-		raise HTTPException(404, 'Aucune image')
+		raise HTTPException(404, 'error.no_frame')
 	vision_frame = restrict_frame(vision_frame, (max_size, max_size))
 	_, buffer = cv2.imencode('.jpg', vision_frame, [ cv2.IMWRITE_JPEG_QUALITY, 88 ])
 	return Response(buffer.tobytes(), media_type = 'image/jpeg', headers = { 'Cache-Control': 'max-age=3600' })
@@ -822,7 +829,7 @@ def scan(payload : ScanPayload) -> Dict[str, Any]:
 	target = SESSION.get('target')
 
 	if not target:
-		raise HTTPException(400, 'Ajoutez d\'abord une photo ou une vidéo.')
+		raise HTTPException(400, 'error.no_target')
 
 	if payload.mode == 'video' and target.get('type') == 'video':
 		samples = max(4, min(400, payload.samples))
@@ -867,9 +874,9 @@ def assign_source(person_id : int, payload : AssignPayload) -> Dict[str, Any]:
 	source_id = payload.source_id or None
 
 	if not person:
-		raise HTTPException(404, 'Personne introuvable')
+		raise HTTPException(404, 'error.person_not_found')
 	if source_id and not find_library_item(source_id):
-		raise HTTPException(404, 'Source introuvable')
+		raise HTTPException(404, 'error.source_not_found')
 
 	with ENGINE_LOCK:
 		assign_library_item(person, find_library_item(source_id))
@@ -893,7 +900,7 @@ def update_sticker(person_id : int, payload : Dict[str, Any]) -> Dict[str, Any]:
 	person = find_person(person_id)
 
 	if not person or not person.get('sticker'):
-		raise HTTPException(404, 'Aucune image associée à cette personne')
+		raise HTTPException(404, 'error.no_sticker')
 
 	with ENGINE_LOCK:
 		if payload.get('reset'):
@@ -913,7 +920,7 @@ def update_sticker(person_id : int, payload : Dict[str, Any]) -> Dict[str, Any]:
 			if not create_sticker_cutout(source):
 				person['sticker']['cutout'] = False
 				apply_settings()
-				raise HTTPException(503, 'Le détourage a échoué (modèle indisponible ?).')
+				raise HTTPException(503, 'error.cutout_failed')
 		apply_settings()
 	return serialize_session()
 
@@ -1149,7 +1156,7 @@ def get_library_image(library_id : str, variant : str = 'original') -> FileRespo
 	library_item = find_library_item(library_id)
 
 	if not library_item:
-		raise HTTPException(404, 'Image introuvable')
+		raise HTTPException(404, 'error.image_not_found')
 	if variant in [ 'round', 'cutout' ] and library_item.get(variant + '_path'):
 		return FileResponse(library_item.get(variant + '_path'))
 	return FileResponse(library_item.get('path'))
@@ -1206,7 +1213,7 @@ def update_settings(payload : Dict[str, Any]) -> Dict[str, Any]:
 
 		# fetch freshly picked models right away instead of on the first preview
 		if any(key in payload for key in [ 'face_detector_model', 'face_swapper_model', 'face_enhancer', 'face_enhancer_model', 'occlusion' ]) and not ensure_models(collect_wanted_processors()):
-			raise HTTPException(503, 'Impossible de télécharger le modèle (connexion internet ?).')
+			raise HTTPException(503, 'error.model_download')
 	return serialize_session()
 
 
@@ -1225,11 +1232,11 @@ def get_preview(frame_number : int = 0, max_size : int = 1600, stickers : int = 
 		vision_frame = read_target_frame(frame_number)
 
 		if vision_frame is None:
-			raise HTTPException(404, 'Aucune image')
+			raise HTTPException(404, 'error.no_frame')
 		apply_settings()
 
 		if not ensure_models():
-			raise HTTPException(503, 'Impossible de télécharger les modèles nécessaires.')
+			raise HTTPException(503, 'error.models_download')
 
 		target_vision_frame = restrict_frame(vision_frame, (max_size, max_size))
 		temp_vision_frame = target_vision_frame.copy()
@@ -1268,9 +1275,9 @@ def render() -> Dict[str, Any]:
 	target = SESSION.get('target')
 
 	if not target:
-		raise HTTPException(400, 'Ajoutez d\'abord une photo ou une vidéo.')
+		raise HTTPException(400, 'error.no_target')
 	if not any(person.get('source_id') for person in SESSION.get('people')):
-		raise HTTPException(400, 'Associez au moins un visage ou une image à une personne.')
+		raise HTTPException(400, 'error.no_assignment')
 	start_task('render', run_render)
 	return serialize_session()
 
@@ -1289,7 +1296,7 @@ def get_download() -> Dict[str, Any]:
 def cancel_task() -> Dict[str, Any]:
 	if TASK.get('status') == 'running':
 		TASK['cancel'] = True
-		TASK['stage'] = 'Annulation…'
+		TASK['stage'] = 'stage.cancelling'
 
 		if TASK.get('kind') == 'render':
 			process_manager.stop()
@@ -1301,7 +1308,7 @@ def get_output(output_name : str) -> FileResponse:
 	output_path = (OUTPUT_PATH / output_name).resolve()
 
 	if output_path.parent != OUTPUT_PATH.resolve() or not output_path.is_file():
-		raise HTTPException(404, 'Fichier introuvable')
+		raise HTTPException(404, 'error.file_not_found')
 	return FileResponse(output_path, filename = output_name, content_disposition_type = 'inline')
 
 

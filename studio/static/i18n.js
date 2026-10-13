@@ -1,0 +1,528 @@
+'use strict';
+
+const I18N =
+{
+	fr:
+	{
+		'language.name': 'Français',
+		'app.caption': 'Propulsé par FaceFusion',
+
+		'toolbar.open': 'Ouvrir',
+		'toolbar.open_title': 'Ouvrir une photo ou une vidéo',
+		'toolbar.settings': 'Réglages',
+		'toolbar.render': 'Générer',
+		'toolbar.render_count': 'Générer · {count}',
+
+		'mode.original': 'Original',
+		'mode.result': 'Aperçu',
+		'mode.compare': 'Comparer',
+
+		'dropzone.title': 'Déposez une photo ou une vidéo',
+		'dropzone.text': 'Tous les visages seront détectés. Vous choisirez ensuite un nouveau visage pour chacun, et tout sera généré en une seule fois.',
+		'dropzone.pick': 'Choisir un fichier',
+		'frame.target_alt': 'Image cible',
+		'frame.result_alt': 'Aperçu',
+
+		'hint.armed': 'Touchez une personne pour lui donner ce visage',
+		'hint.original': 'Touchez un visage pour le retrouver dans la liste',
+		'hint.no_source': 'Associez un visage source pour voir l’aperçu',
+		'hint.compare': 'Faites glisser la poignée pour comparer',
+		'hint.result': 'Aperçu de cette image',
+
+		'timeline.back': 'Image précédente (←)',
+		'timeline.forward': 'Image suivante (→)',
+		'timeline.position': 'Position dans la vidéo',
+		'timeline.timecode': '{time}  ·  image {frame} / {total}',
+		'trim.start': '⟦ Début ici',
+		'trim.start_title': 'Commencer le rendu ici',
+		'trim.end': 'Fin ici ⟧',
+		'trim.end_title': 'Arrêter le rendu ici',
+		'trim.reset': 'Réinitialiser',
+
+		'library.title': 'Sources',
+		'library.faces': 'Visages',
+		'library.stickers': 'Images',
+		'library.add': 'Ajouter',
+		'library.face_hint': 'Remplacent le visage. Glissez-en un sur une personne, ou touchez-le puis touchez la personne.',
+		'library.face_empty': 'Déposez ici les photos des nouveaux visages',
+		'library.face_added_one': '{count} visage ajouté à la bibliothèque',
+		'library.face_added_other': '{count} visages ajoutés à la bibliothèque',
+		'library.face_rejected': 'Aucun visage trouvé dans : {names}',
+		'library.sticker_hint': 'Collées sur la tête et elles la suivent (PNG transparent idéal). Posez-en une sur une personne, puis « Ajuster ».',
+		'library.sticker_empty': 'Déposez ici des images à coller sur les têtes : mèmes, emojis, têtes détourées…',
+		'library.sticker_added_one': '{count} image ajoutée à la bibliothèque',
+		'library.sticker_added_other': '{count} images ajoutées à la bibliothèque',
+		'library.sticker_rejected': 'Image illisible : {names}',
+		'library.item_title': '{name} — glissez sur une personne, ou touchez puis choisissez une personne',
+		'library.remove': 'Supprimer',
+		'library.analysing_one': 'Analyse de {count} image…',
+		'library.analysing_other': 'Analyse de {count} images…',
+
+		'people.title': 'Personnes',
+		'people.no_target': 'Ajoutez une cible pour commencer.',
+		'people.none_video': 'Lancez l’analyse de la vidéo.',
+		'people.none_image': 'Aucun visage détecté sur cette image.',
+		'people.summary': '{count} sur {total} à modifier · les autres restent intactes',
+		'people.scan_frame': 'Cette image',
+		'people.scan_frame_title': 'Ajouter les visages visibles sur cette image',
+		'people.scan_video': 'Toute la vidéo',
+		'people.scan_video_title': 'Parcourir toute la vidéo pour trouver chaque personne',
+		'people.scanning': 'Analyse…',
+		'people.cancel': 'Annuler',
+		'people.empty': 'Aucun visage pour l’instant',
+		'people.assign_order': 'Répartir les sources dans l’ordre',
+		'people.clear': 'Tout retirer',
+
+		'person.name': 'Personne {number}',
+		'person.go_to_frame': 'Aller à cette image',
+		'person.seen': 'vue {count}×',
+		'person.on_photo': 'sur la photo',
+		'person.sticker': 'image collée',
+		'person.swapped': 'sera remplacée',
+		'person.kept': 'conservée',
+		'person.change_source': 'Changer la source',
+		'person.choose_source': 'Choisir une source',
+		'person.remove_source': 'Retirer',
+		'person.adjust': 'Ajuster l’image',
+		'person.remove': 'Retirer de la liste',
+		'face.unknown': 'Visage non répertorié — touchez pour l’ajouter',
+
+		'adjust.scale': 'Taille',
+		'adjust.offset_x': 'Horizontal',
+		'adjust.offset_y': 'Vertical',
+		'adjust.rotation': 'Rotation',
+		'adjust.depth': 'Effet 3D',
+		'adjust.follow_rotation': 'Suit l’inclinaison',
+		'adjust.mirror': 'Miroir',
+		'adjust.shape': 'Forme',
+		'adjust.shape_full': 'Entière',
+		'adjust.shape_round': 'Ronde',
+		'adjust.shape_cutout': 'Détourée',
+		'adjust.cutting_out': 'Détourage…',
+		'adjust.reset': 'Réinitialiser',
+
+		'toast.created_one': '{count} nouvelle personne ajoutée',
+		'toast.created_other': '{count} nouvelles personnes ajoutées',
+		'toast.created_none': 'Aucune nouvelle personne sur cette image',
+		'toast.detected_one': '{count} visage détecté',
+		'toast.detected_other': '{count} visages détectés',
+		'toast.detected_none': 'Aucun visage détecté',
+		'toast.found_one': '{count} personne trouvée dans la vidéo',
+		'toast.found_other': '{count} personnes trouvées dans la vidéo',
+		'toast.found_none': 'Aucun visage trouvé dans la vidéo',
+		'toast.cancelled': 'Opération annulée',
+		'toast.reconnected': 'Reconnecté au serveur',
+		'toast.flagged': 'Cette image a été floutée par l’analyseur de contenu de FaceFusion.',
+		'toast.pick_image': 'Déposez une image (jpg, png, webp…)',
+		'toast.pick_media': 'Choisissez une photo ou une vidéo',
+		'toast.need_faces': 'Ajoutez d’abord des visages sources',
+		'toast.need_stickers': 'Ajoutez d’abord des images',
+
+		'drop.open': 'Déposer pour ouvrir',
+		'drop.replace': 'Déposez sur la vidéo/photo pour la remplacer, ou sur une personne',
+
+		'import.stage': 'Import',
+		'import.detecting': 'Détection des visages',
+		'import.wait': 'Un instant…',
+
+		'hud.preparing': 'Préparation',
+		'hud.cancel': 'Annuler',
+		'hud.download': 'Téléchargement du modèle',
+		'hud.checking_models': 'Vérification des modèles…',
+
+		'stage.models': 'Préparation des modèles',
+		'stage.scan': 'Analyse des visages',
+		'stage.checking': 'Vérification des modèles',
+		'stage.preparing': 'Préparation',
+		'stage.content': 'Analyse du contenu',
+		'stage.extract': 'Extraction des images',
+		'stage.track': 'Suivi des visages',
+		'stage.swap': 'Remplacement des visages',
+		'stage.merge': 'Assemblage de la vidéo',
+		'stage.audio': 'Restauration de l’audio',
+		'stage.finalize': 'Finalisation',
+		'stage.cancelling': 'Annulation…',
+		'stage.cancelled': 'Annulé',
+		'message.people_found_one': '{count} personne trouvée',
+		'message.people_found_other': '{count} personnes trouvées',
+		'message.frames': '{done} / {total} images',
+		'message.frames_analysed': '{done} / {total} images analysées',
+
+		'result.title': 'C’est prêt ✨',
+		'result.close': 'Fermer',
+		'result.reveal_finder': 'Afficher dans le Finder',
+		'result.reveal_folder': 'Afficher dans le dossier',
+		'result.download': 'Télécharger',
+		'result.alt': 'Résultat',
+
+		'download.title': 'Téléchargement du modèle',
+		'download.size': '{received} sur {total}',
+
+		'offline.title': 'Le serveur est arrêté',
+		'offline.text': 'Relancez MultiFace Studio (depuis Pinokio ou son lanceur) : la page se reconnecte toute seule.',
+		'offline.retry': 'Réessayer',
+		'offline.message': 'Le serveur MultiFace Studio est arrêté.',
+
+		'settings.title': 'Réglages',
+		'settings.close': 'Fermer (Échap)',
+		'settings.swap': 'Remplacement',
+		'settings.model': 'Modèle',
+		'settings.to_download': ' — à télécharger',
+		'settings.pixel_boost': 'Résolution du visage',
+		'settings.weight': 'Force du visage source',
+		'settings.swap_note': '« À télécharger » : le modèle n’est pas encore sur votre ordinateur, il se téléchargera automatiquement au premier aperçu. Une résolution plus haute est plus nette mais plus lente.',
+		'settings.enhance': 'Amélioration',
+		'settings.enhancer': 'Rendre les visages plus nets',
+		'settings.blend': 'Intensité',
+		'settings.mask': 'Masque',
+		'settings.occlusion': 'Respecter mains, cheveux, lunettes',
+		'settings.mask_blur': 'Fondu des bords',
+		'settings.recognition': 'Reconnaissance',
+		'settings.distance': 'Tolérance',
+		'settings.detector': 'Détecteur',
+		'settings.detector_all': 'Tous (le plus précis)',
+		'settings.detector_score': 'Seuil de détection',
+		'settings.recognition_note': 'Tolérance plus haute : une personne de profil est mieux reconnue, mais deux personnes proches risquent d’être confondues. Seuil plus bas : détecte les petits visages.',
+		'settings.export': 'Export',
+		'settings.image_quality': 'Qualité photo',
+		'settings.video_quality': 'Qualité vidéo',
+		'settings.performance': 'Performance',
+		'settings.provider': 'Calcul',
+		'settings.provider_cpu': 'Processeur (CPU)',
+		'settings.appearance': 'Apparence',
+		'settings.theme': 'Thème',
+		'settings.theme_auto': 'Automatique',
+		'settings.theme_light': 'Clair',
+		'settings.theme_dark': 'Sombre',
+		'settings.language': 'Langue',
+
+		'error.status': 'Erreur {status}',
+		'error.preview': 'Aperçu indisponible',
+		'error.task_running': 'Une tâche est déjà en cours.',
+		'error.no_target': 'Ajoutez d’abord une photo ou une vidéo.',
+		'error.unsupported_format': 'Format non supporté. Utilisez une photo (jpg, png, webp…) ou une vidéo (mp4, mov…).',
+		'error.no_frame': 'Aucune image',
+		'error.person_not_found': 'Personne introuvable',
+		'error.source_not_found': 'Source introuvable',
+		'error.no_sticker': 'Aucune image associée à cette personne',
+		'error.cutout_failed': 'Le détourage a échoué (modèle indisponible ?).',
+		'error.image_not_found': 'Image introuvable',
+		'error.file_not_found': 'Fichier introuvable',
+		'error.model_download': 'Impossible de télécharger le modèle (connexion internet ?).',
+		'error.models_download': 'Impossible de télécharger les modèles nécessaires (connexion internet ?).',
+		'error.base_models_download': 'Impossible de télécharger les modèles de base (connexion internet ?).',
+		'error.no_assignment': 'Associez au moins un visage ou une image à une personne.',
+		'error.no_valid_source': 'Aucune source valide : ajoutez au moins un visage net ou une image.',
+		'error.content_refused': 'Le contenu a été refusé par l’analyseur de contenu de FaceFusion.',
+		'error.render_failed': 'Le rendu a échoué, consultez le terminal pour les détails.',
+		'error.unexpected': 'Erreur inattendue : {detail}',
+
+		'unit.megabytes': '{value} Mo',
+		'unit.gigabytes': '{value} Go'
+	},
+	en:
+	{
+		'language.name': 'English',
+		'app.caption': 'Powered by FaceFusion',
+
+		'toolbar.open': 'Open',
+		'toolbar.open_title': 'Open a photo or a video',
+		'toolbar.settings': 'Settings',
+		'toolbar.render': 'Generate',
+		'toolbar.render_count': 'Generate · {count}',
+
+		'mode.original': 'Original',
+		'mode.result': 'Preview',
+		'mode.compare': 'Compare',
+
+		'dropzone.title': 'Drop a photo or a video',
+		'dropzone.text': 'Every face will be detected. Then you pick a new face for each one, and everything renders in one go.',
+		'dropzone.pick': 'Choose a file',
+		'frame.target_alt': 'Target image',
+		'frame.result_alt': 'Preview',
+
+		'hint.armed': 'Tap a person to give them this face',
+		'hint.original': 'Tap a face to find it in the list',
+		'hint.no_source': 'Assign a source face to see the preview',
+		'hint.compare': 'Drag the handle to compare',
+		'hint.result': 'Preview of this frame',
+
+		'timeline.back': 'Previous frame (←)',
+		'timeline.forward': 'Next frame (→)',
+		'timeline.position': 'Position in the video',
+		'timeline.timecode': '{time}  ·  frame {frame} / {total}',
+		'trim.start': '⟦ Start here',
+		'trim.start_title': 'Start rendering here',
+		'trim.end': 'End here ⟧',
+		'trim.end_title': 'Stop rendering here',
+		'trim.reset': 'Reset',
+
+		'library.title': 'Sources',
+		'library.faces': 'Faces',
+		'library.stickers': 'Images',
+		'library.add': 'Add',
+		'library.face_hint': 'They replace the face. Drag one onto a person, or tap it and then tap the person.',
+		'library.face_empty': 'Drop photos of the new faces here',
+		'library.face_added_one': '{count} face added to the library',
+		'library.face_added_other': '{count} faces added to the library',
+		'library.face_rejected': 'No face found in: {names}',
+		'library.sticker_hint': 'Pasted on the head, they follow it (a transparent PNG works best). Drop one on a person, then “Adjust”.',
+		'library.sticker_empty': 'Drop images to paste on heads here: memes, emojis, cut-out heads…',
+		'library.sticker_added_one': '{count} image added to the library',
+		'library.sticker_added_other': '{count} images added to the library',
+		'library.sticker_rejected': 'Unreadable image: {names}',
+		'library.item_title': '{name} — drag it onto a person, or tap it and then pick a person',
+		'library.remove': 'Delete',
+		'library.analysing_one': 'Analysing {count} image…',
+		'library.analysing_other': 'Analysing {count} images…',
+
+		'people.title': 'People',
+		'people.no_target': 'Add a target to get started.',
+		'people.none_video': 'Run the video analysis.',
+		'people.none_image': 'No face detected in this image.',
+		'people.summary': '{count} of {total} to change · the others stay untouched',
+		'people.scan_frame': 'This frame',
+		'people.scan_frame_title': 'Add the faces visible in this frame',
+		'people.scan_video': 'Whole video',
+		'people.scan_video_title': 'Go through the whole video to find every person',
+		'people.scanning': 'Analysing…',
+		'people.cancel': 'Cancel',
+		'people.empty': 'No faces yet',
+		'people.assign_order': 'Assign the sources in order',
+		'people.clear': 'Remove all',
+
+		'person.name': 'Person {number}',
+		'person.go_to_frame': 'Go to this frame',
+		'person.seen': 'seen {count}×',
+		'person.on_photo': 'in the photo',
+		'person.sticker': 'image pasted',
+		'person.swapped': 'will be replaced',
+		'person.kept': 'kept',
+		'person.change_source': 'Change the source',
+		'person.choose_source': 'Choose a source',
+		'person.remove_source': 'Remove',
+		'person.adjust': 'Adjust the image',
+		'person.remove': 'Remove from the list',
+		'face.unknown': 'Face not listed — tap to add it',
+
+		'adjust.scale': 'Size',
+		'adjust.offset_x': 'Horizontal',
+		'adjust.offset_y': 'Vertical',
+		'adjust.rotation': 'Rotation',
+		'adjust.depth': '3D effect',
+		'adjust.follow_rotation': 'Follows the tilt',
+		'adjust.mirror': 'Mirror',
+		'adjust.shape': 'Shape',
+		'adjust.shape_full': 'Whole',
+		'adjust.shape_round': 'Round',
+		'adjust.shape_cutout': 'Cut out',
+		'adjust.cutting_out': 'Cutting out…',
+		'adjust.reset': 'Reset',
+
+		'toast.created_one': '{count} new person added',
+		'toast.created_other': '{count} new people added',
+		'toast.created_none': 'No new person in this frame',
+		'toast.detected_one': '{count} face detected',
+		'toast.detected_other': '{count} faces detected',
+		'toast.detected_none': 'No face detected',
+		'toast.found_one': '{count} person found in the video',
+		'toast.found_other': '{count} people found in the video',
+		'toast.found_none': 'No face found in the video',
+		'toast.cancelled': 'Operation cancelled',
+		'toast.reconnected': 'Reconnected to the server',
+		'toast.flagged': 'This frame was blurred by FaceFusion’s content analyser.',
+		'toast.pick_image': 'Drop an image (jpg, png, webp…)',
+		'toast.pick_media': 'Choose a photo or a video',
+		'toast.need_faces': 'Add source faces first',
+		'toast.need_stickers': 'Add images first',
+
+		'drop.open': 'Drop to open',
+		'drop.replace': 'Drop on the video/photo to replace it, or on a person',
+
+		'import.stage': 'Import',
+		'import.detecting': 'Detecting faces',
+		'import.wait': 'One moment…',
+
+		'hud.preparing': 'Preparing',
+		'hud.cancel': 'Cancel',
+		'hud.download': 'Downloading the model',
+		'hud.checking_models': 'Checking the models…',
+
+		'stage.models': 'Preparing the models',
+		'stage.scan': 'Analysing faces',
+		'stage.checking': 'Checking the models',
+		'stage.preparing': 'Preparing',
+		'stage.content': 'Analysing the content',
+		'stage.extract': 'Extracting frames',
+		'stage.track': 'Tracking faces',
+		'stage.swap': 'Replacing faces',
+		'stage.merge': 'Assembling the video',
+		'stage.audio': 'Restoring the audio',
+		'stage.finalize': 'Finishing',
+		'stage.cancelling': 'Cancelling…',
+		'stage.cancelled': 'Cancelled',
+		'message.people_found_one': '{count} person found',
+		'message.people_found_other': '{count} people found',
+		'message.frames': '{done} / {total} frames',
+		'message.frames_analysed': '{done} / {total} frames analysed',
+
+		'result.title': 'It’s ready ✨',
+		'result.close': 'Close',
+		'result.reveal_finder': 'Show in Finder',
+		'result.reveal_folder': 'Show in folder',
+		'result.download': 'Download',
+		'result.alt': 'Result',
+
+		'download.title': 'Downloading the model',
+		'download.size': '{received} of {total}',
+
+		'offline.title': 'The server is stopped',
+		'offline.text': 'Restart MultiFace Studio (from Pinokio or its launcher): the page reconnects on its own.',
+		'offline.retry': 'Retry',
+		'offline.message': 'The MultiFace Studio server is stopped.',
+
+		'settings.title': 'Settings',
+		'settings.close': 'Close (Esc)',
+		'settings.swap': 'Face swap',
+		'settings.model': 'Model',
+		'settings.to_download': ' — to download',
+		'settings.pixel_boost': 'Face resolution',
+		'settings.weight': 'Source face strength',
+		'settings.swap_note': '“To download”: the model is not on your computer yet, it downloads automatically on the first preview. A higher resolution is sharper but slower.',
+		'settings.enhance': 'Enhancement',
+		'settings.enhancer': 'Make faces sharper',
+		'settings.blend': 'Strength',
+		'settings.mask': 'Mask',
+		'settings.occlusion': 'Respect hands, hair, glasses',
+		'settings.mask_blur': 'Edge softness',
+		'settings.recognition': 'Recognition',
+		'settings.distance': 'Tolerance',
+		'settings.detector': 'Detector',
+		'settings.detector_all': 'All (most accurate)',
+		'settings.detector_score': 'Detection threshold',
+		'settings.recognition_note': 'Higher tolerance: a person in profile is recognised better, but two similar people may get mixed up. Lower threshold: detects small faces.',
+		'settings.export': 'Export',
+		'settings.image_quality': 'Photo quality',
+		'settings.video_quality': 'Video quality',
+		'settings.performance': 'Performance',
+		'settings.provider': 'Compute',
+		'settings.provider_cpu': 'Processor (CPU)',
+		'settings.appearance': 'Appearance',
+		'settings.theme': 'Theme',
+		'settings.theme_auto': 'Automatic',
+		'settings.theme_light': 'Light',
+		'settings.theme_dark': 'Dark',
+		'settings.language': 'Language',
+
+		'error.status': 'Error {status}',
+		'error.preview': 'Preview unavailable',
+		'error.task_running': 'A task is already running.',
+		'error.no_target': 'Add a photo or a video first.',
+		'error.unsupported_format': 'Unsupported format. Use a photo (jpg, png, webp…) or a video (mp4, mov…).',
+		'error.no_frame': 'No frame',
+		'error.person_not_found': 'Person not found',
+		'error.source_not_found': 'Source not found',
+		'error.no_sticker': 'No image is assigned to this person',
+		'error.cutout_failed': 'The cut-out failed (model unavailable?).',
+		'error.image_not_found': 'Image not found',
+		'error.file_not_found': 'File not found',
+		'error.model_download': 'Could not download the model (internet connection?).',
+		'error.models_download': 'Could not download the required models (internet connection?).',
+		'error.base_models_download': 'Could not download the base models (internet connection?).',
+		'error.no_assignment': 'Assign at least one face or image to a person.',
+		'error.no_valid_source': 'No valid source: add at least one clear face or an image.',
+		'error.content_refused': 'The content was refused by FaceFusion’s content analyser.',
+		'error.render_failed': 'The render failed, check the terminal for details.',
+		'error.unexpected': 'Unexpected error: {detail}',
+
+		'unit.megabytes': '{value} MB',
+		'unit.gigabytes': '{value} GB'
+	}
+};
+
+const LANGUAGES = Object.keys(I18N);
+let LANGUAGE = readLanguage();
+
+function readLanguage()
+{
+	try
+	{
+		const stored = localStorage.getItem('studio-language');
+
+		if (LANGUAGES.includes(stored))
+		{
+			return stored;
+		}
+	}
+	catch (error)
+	{
+		/* private mode: fall back to the browser language */
+	}
+	return (navigator.language || '').toLowerCase().startsWith('fr') ? 'fr' : 'en';
+}
+
+function writeLanguage(language)
+{
+	LANGUAGE = LANGUAGES.includes(language) ? language : 'en';
+
+	try
+	{
+		localStorage.setItem('studio-language', LANGUAGE);
+	}
+	catch (error)
+	{
+		/* private mode: the choice just won't persist */
+	}
+}
+
+function t(key, params = {})
+{
+	const text = I18N[LANGUAGE][key] ?? I18N.fr[key] ?? key;
+	return text.replace(/\{(\w+)\}/g, (match, name) => params[name] ?? match);
+}
+
+function hasTranslation(key)
+{
+	return key in I18N[LANGUAGE] || key in I18N.fr;
+}
+
+// plural forms differ: french keeps the singular for 0 and 1, english only for 1
+function tc(key, count, params = {})
+{
+	const isOne = LANGUAGE === 'fr' ? count <= 1 : count === 1;
+	return t(key + (isOne ? '_one' : '_other'), Object.assign({ count }, params));
+}
+
+function formatDecimal(value, digits)
+{
+	const text = value.toFixed(digits);
+	return LANGUAGE === 'fr' ? text.replace('.', ',') : text;
+}
+
+function applyTranslations(root = document)
+{
+	document.documentElement.lang = LANGUAGE;
+	root.querySelectorAll('[data-i18n]').forEach(node => { node.textContent = t(node.dataset.i18n); });
+	root.querySelectorAll('[data-i18n-title]').forEach(node => { node.title = t(node.dataset.i18nTitle); });
+	root.querySelectorAll('[data-i18n-aria]').forEach(node => node.setAttribute('aria-label', t(node.dataset.i18nAria)));
+	root.querySelectorAll('[data-i18n-alt]').forEach(node => { node.alt = t(node.dataset.i18nAlt); });
+}
+
+// the server sends keys and values, so every viewer reads its messages in their own language
+function translateServer(text, params = {})
+{
+	if (!text)
+	{
+		return '';
+	}
+	if (params && params.count !== undefined && hasTranslation(text + '_one'))
+	{
+		return tc(text, params.count, params);
+	}
+	return hasTranslation(text) ? t(text, params || {}) : text;
+}
+
+function formatPercent(value)
+{
+	return LANGUAGE === 'fr' ? value + ' %' : value + '%';
+}

@@ -4,7 +4,7 @@
 
 FaceFusion remplace un visage à la fois. Avec 20 personnes sur une image, il faut donc lancer 20 rendus de suite.
 MultiFace Studio détecte toutes les personnes, vous laisse déposer un visage source en face de chacune, puis génère tout d’un coup.
-L’interface est inspirée d’Apple (verre dépoli, thème clair/sombre automatique).
+L’interface, en français ou en anglais (**Réglages → Apparence → Langue**), est inspirée d’Apple (verre dépoli, thème clair/sombre automatique).
 
 Le moteur est [FaceFusion 3.5.4](https://github.com/facefusion/facefusion), avec un petit patch (`app/patches/`).
 
@@ -69,6 +69,8 @@ Le studio est piloté par une API HTTP locale (le port est affiché au démarrag
 | `POST` | `/api/task/cancel` | Annule la tâche en cours |
 | `GET` | `/api/output/{name}` | Télécharge un résultat |
 | `GET` | `/api/state` | État complet : cible, personnes, bibliothèque, réglages, tâche |
+
+Les textes renvoyés par le serveur (`stage` et `message` d’une tâche, `error` d’une requête refusée) sont des clés de traduction, par exemple `stage.swap` ou `message.frames` avec ses valeurs dans `message_params`. Les textes français et anglais sont dans `app/studio/static/i18n.js`.
 
 ### curl
 

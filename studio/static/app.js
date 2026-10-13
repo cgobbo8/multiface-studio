@@ -122,24 +122,31 @@ const LIBRARY_KINDS =
 {
 	face:
 	{
-		hint: 'Remplacent le visage. Glissez-en un sur une personne, ou touchez-le puis touchez la personne.',
-		empty: 'Déposez ici les photos des nouveaux visages',
-		added: [ 'visage ajouté', 'visages ajoutés' ],
-		rejected: 'Aucun visage trouvé dans : '
+		hint: 'library.face_hint',
+		empty: 'library.face_empty',
+		added: 'library.face_added',
+		rejected: 'library.face_rejected'
 	},
 	sticker:
 	{
-		hint: 'Collées sur la tête et elles la suivent (PNG transparent idéal). Posez-en une sur une personne, puis « Ajuster ».',
-		empty: 'Déposez ici des images à coller sur les têtes : mèmes, emojis, têtes détourées…',
-		added: [ 'image ajoutée', 'images ajoutées' ],
-		rejected: 'Image illisible : '
+		hint: 'library.sticker_hint',
+		empty: 'library.sticker_empty',
+		added: 'library.sticker_added',
+		rejected: 'library.sticker_rejected'
 	}
 };
 
 const LIBRARY_MIME = 'application/x-facefusion-source';
-const OFFLINE_MESSAGE = 'Le serveur MultiFace Studio est arrêté.';
 
 /* ------------------------------------------------------------ api */
+
+function offlineError()
+{
+	const error = new Error(t('offline.message'));
+
+	error.offline = true;
+	return error;
+}
 
 async function request(method, url, body)
 {
@@ -159,13 +166,13 @@ async function request(method, url, body)
 	catch (error)
 	{
 		setOffline(true);
-		throw new Error(OFFLINE_MESSAGE);
+		throw offlineError();
 	}
 	const data = await response.json().catch(() => ({}));
 
 	if (!response.ok)
 	{
-		throw new Error(data.error || 'Erreur ' + response.status);
+		throw new Error(data.error ? translateServer(data.error) : t('error.status', { status: response.status }));
 	}
 	return data;
 }
@@ -196,13 +203,13 @@ function upload(url, files, field, onProgress)
 			}
 			else
 			{
-				reject(new Error((xhr.response && xhr.response.error) || 'Erreur ' + xhr.status));
+				reject(new Error(xhr.response && xhr.response.error ? translateServer(xhr.response.error) : t('error.status', { status: xhr.status })));
 			}
 		};
 		xhr.onerror = () =>
 		{
 			setOffline(true);
-			reject(new Error(OFFLINE_MESSAGE));
+			reject(offlineError());
 		};
 		xhr.send(form);
 	});
@@ -250,18 +257,13 @@ function escapeHtml(value)
 	return String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' })[character]);
 }
 
-function plural(count, singular, pluralForm)
-{
-	return count + ' ' + (count > 1 ? pluralForm : singular);
-}
-
 function formatTimecode(frameNumber)
 {
 	const fps = (target() && target().fps) || 25;
 	const seconds = frameNumber / fps;
 	const minutes = Math.floor(seconds / 60);
 	const rest = seconds - minutes * 60;
-	return String(minutes).padStart(2, '0') + ':' + rest.toFixed(2).padStart(5, '0') + '  ·  image ' + (frameNumber + 1) + ' / ' + target().frame_total;
+	return t('timeline.timecode', { time: String(minutes).padStart(2, '0') + ':' + rest.toFixed(2).padStart(5, '0'), frame: frameNumber + 1, total: target().frame_total });
 }
 
 function toast(message, kind = 'success', duration = 3400)
@@ -282,7 +284,7 @@ function toast(message, kind = 'success', duration = 3400)
 function handleError(error)
 {
 	// the offline banner already explains a stopped server
-	if (state.offline || (error && error.message === OFFLINE_MESSAGE))
+	if (state.offline || (error && error.offline))
 	{
 		return;
 	}
@@ -311,8 +313,8 @@ function renderToolbar()
 {
 	const count = assignedCount();
 
-	el.targetCaption.textContent = target() ? target().name + ' · ' + target().width + '×' + target().height : 'Propulsé par FaceFusion';
-	el.renderLabel.textContent = count ? 'Générer · ' + count : 'Générer';
+	el.targetCaption.textContent = target() ? target().name + ' · ' + target().width + '×' + target().height : t('app.caption');
+	el.renderLabel.textContent = count ? t('toolbar.render_count', { count }) : t('toolbar.render');
 	el.render.disabled = !target() || !count || isBusy();
 }
 
@@ -365,19 +367,19 @@ function renderMode()
 	}
 	else if (state.armedId)
 	{
-		el.viewerHint.textContent = 'Touchez une personne pour lui donner ce visage';
+		el.viewerHint.textContent = t('hint.armed');
 	}
 	else if (state.mode === 'original')
 	{
-		el.viewerHint.textContent = people().length ? 'Touchez un visage pour le retrouver dans la liste' : '';
+		el.viewerHint.textContent = people().length ? t('hint.original') : '';
 	}
 	else if (!assignedCount())
 	{
-		el.viewerHint.textContent = 'Associez un visage source pour voir l’aperçu';
+		el.viewerHint.textContent = t('hint.no_source');
 	}
 	else
 	{
-		el.viewerHint.textContent = state.mode === 'compare' ? 'Faites glisser la poignée pour comparer' : 'Aperçu de cette image';
+		el.viewerHint.textContent = state.mode === 'compare' ? t('hint.compare') : t('hint.result');
 	}
 }
 
@@ -519,13 +521,13 @@ async function fetchPreview()
 		const response = await withDownloadWatch(() => fetch('/api/preview?frame_number=' + state.frameNumber + '&max_size=1920' + (live ? '&stickers=0' : ''))).catch(() =>
 		{
 			setOffline(true);
-			throw new Error(OFFLINE_MESSAGE);
+			throw offlineError();
 		});
 
 		if (!response.ok)
 		{
 			const data = await response.json().catch(() => ({}));
-			throw new Error(data.error || 'Aperçu indisponible');
+			throw new Error(data.error ? translateServer(data.error) : t('error.preview'));
 		}
 		const blob = await response.blob();
 
@@ -544,7 +546,7 @@ async function fetchPreview()
 
 		if (response.headers.get('X-Content-Flagged') === '1')
 		{
-			toast('Cette image a été floutée par l’analyseur de contenu de FaceFusion.', 'info', 5000);
+			toast(t('toast.flagged'), 'info', 5000);
 		}
 	}
 	catch (error)
@@ -594,7 +596,7 @@ function renderFaces()
 		node.classList.toggle('is-assigned', Boolean(person && person.source_id));
 		node.classList.toggle('is-unknown', !person);
 		node.classList.toggle('is-hover', Boolean(person && person.id === state.hoverPersonId));
-		node.title = person ? 'Personne ' + (index + 1) : 'Visage non répertorié — touchez pour l’ajouter';
+		node.title = person ? t('person.name', { number: index + 1 }) : t('face.unknown');
 		node.innerHTML = '<span class="face-badge">' + (person ? index + 1 : '+') + '</span>';
 
 		if (person && person.source_thumbnail)
@@ -748,22 +750,23 @@ function renderPeople()
 
 	if (!target())
 	{
-		el.peopleSubtitle.textContent = 'Ajoutez une cible pour commencer.';
+		el.peopleSubtitle.textContent = t('people.no_target');
 	}
 	else if (!list.length)
 	{
-		el.peopleSubtitle.textContent = isVideo() ? 'Lancez l’analyse de la vidéo.' : 'Aucun visage détecté sur cette image.';
+		el.peopleSubtitle.textContent = isVideo() ? t('people.none_video') : t('people.none_image');
 	}
 	else
 	{
-		el.peopleSubtitle.textContent = count + ' sur ' + list.length + ' à modifier · les autres restent intactes';
+		el.peopleSubtitle.textContent = t('people.summary', { count, total: list.length });
 	}
 
 	list.forEach((person, index) =>
 	{
 		const node = document.createElement('li');
 		const isNew = !state.renderedPersonIds.has(person.id);
-		const appearance = isVideo() ? 'vue ' + person.count + '×' : 'sur la photo';
+		const appearance = isVideo() ? t('person.seen', { count: person.count }) : t('person.on_photo');
+		const name = escapeHtml(t('person.name', { number: index + 1 }));
 
 		renderedIds.add(person.id);
 		node.className = 'person' + (person.source_id ? ' is-assigned' : '') + (person.id === state.hoverPersonId ? ' is-hover' : '');
@@ -774,15 +777,15 @@ function renderPeople()
 			node.style.animation = 'none';
 		}
 		node.innerHTML =
-			'<button class="person-target" title="' + (isVideo() ? 'Aller à cette image' : 'Personne ' + (index + 1)) + '" style="background-image:url(' + person.thumbnail + ')"><span class="person-number">' + (index + 1) + '</span></button>' +
+			'<button class="person-target" title="' + (isVideo() ? escapeHtml(t('person.go_to_frame')) : name) + '" style="background-image:url(' + person.thumbnail + ')"><span class="person-number">' + (index + 1) + '</span></button>' +
 			ICONS.chevron +
-			'<button class="slot' + (person.source_id ? ' is-filled' : '') + (person.source_kind === 'sticker' ? ' is-sticker' : '') + '" title="' + (person.source_id ? 'Changer la source' : 'Choisir une source') + '"' + (person.source_thumbnail ? ' style="background-image:url(' + person.source_thumbnail + ')"' : '') + '>' +
-				(person.source_id ? '<span class="mini-remove" title="Retirer">' + ICONS.close + '</span>' : ICONS.plus) +
+			'<button class="slot' + (person.source_id ? ' is-filled' : '') + (person.source_kind === 'sticker' ? ' is-sticker' : '') + '" title="' + escapeHtml(person.source_id ? t('person.change_source') : t('person.choose_source')) + '"' + (person.source_thumbnail ? ' style="background-image:url(' + person.source_thumbnail + ')"' : '') + '>' +
+				(person.source_id ? '<span class="mini-remove" title="' + escapeHtml(t('person.remove_source')) + '">' + ICONS.close + '</span>' : ICONS.plus) +
 			'</button>' +
-			'<div class="person-meta"><strong>Personne ' + (index + 1) + '</strong><span>' + appearance + ' · ' + describePerson(person) + '</span></div>' +
+			'<div class="person-meta"><strong>' + name + '</strong><span>' + escapeHtml(appearance + ' · ' + describePerson(person)) + '</span></div>' +
 			'<div class="person-actions">' +
-				(person.source_kind === 'sticker' ? '<button class="icon-button person-adjust' + (state.adjustPersonId === person.id ? ' is-active' : '') + '" title="Ajuster l’image">' + ICONS.sliders + '</button>' : '') +
-				'<button class="icon-button person-remove" title="Retirer de la liste">' + ICONS.close + '</button>' +
+				(person.source_kind === 'sticker' ? '<button class="icon-button person-adjust' + (state.adjustPersonId === person.id ? ' is-active' : '') + '" title="' + escapeHtml(t('person.adjust')) + '">' + ICONS.sliders + '</button>' : '') +
+				'<button class="icon-button person-remove" title="' + escapeHtml(t('person.remove')) + '">' + ICONS.close + '</button>' +
 			'</div>';
 
 		if (person.source_kind === 'sticker' && state.adjustPersonId === person.id)
@@ -843,9 +846,9 @@ function describePerson(person)
 {
 	if (person.source_kind === 'sticker')
 	{
-		return 'image collée';
+		return t('person.sticker');
 	}
-	return person.source_id ? 'sera remplacée' : 'conservée';
+	return person.source_id ? t('person.swapped') : t('person.kept');
 }
 
 function toggleAdjust(person)
@@ -873,24 +876,24 @@ function toggleAdjust(person)
 
 const STICKER_SLIDERS =
 [
-	{ key: 'scale', label: 'Taille', min: 0.2, max: 5, step: 0.05, format: value => Math.round(value * 100) + ' %' },
-	{ key: 'offset_x', label: 'Horizontal', min: -1, max: 1, step: 0.01, format: value => (value > 0 ? '+' : '') + Math.round(value * 100) },
-	{ key: 'offset_y', label: 'Vertical', min: -1, max: 1, step: 0.01, format: value => (value > 0 ? '+' : '') + Math.round(-value * 100) },
-	{ key: 'rotation', label: 'Rotation', min: -180, max: 180, step: 1, format: value => Math.round(value) + '°' },
-	{ key: 'depth', label: 'Effet 3D', min: 0, max: 1, step: 0.05, format: value => Math.round(value * 100) + ' %' }
+	{ key: 'scale', label: 'adjust.scale', min: 0.2, max: 5, step: 0.05, format: value => formatPercent(Math.round(value * 100)) },
+	{ key: 'offset_x', label: 'adjust.offset_x', min: -1, max: 1, step: 0.01, format: value => (value > 0 ? '+' : '') + Math.round(value * 100) },
+	{ key: 'offset_y', label: 'adjust.offset_y', min: -1, max: 1, step: 0.01, format: value => (value > 0 ? '+' : '') + Math.round(-value * 100) },
+	{ key: 'rotation', label: 'adjust.rotation', min: -180, max: 180, step: 1, format: value => Math.round(value) + '°' },
+	{ key: 'depth', label: 'adjust.depth', min: 0, max: 1, step: 0.05, format: value => formatPercent(Math.round(value * 100)) }
 ];
 
 const STICKER_TOGGLES =
 [
-	{ key: 'follow_rotation', label: 'Suit l’inclinaison' },
-	{ key: 'mirror', label: 'Miroir' }
+	{ key: 'follow_rotation', label: 'adjust.follow_rotation' },
+	{ key: 'mirror', label: 'adjust.mirror' }
 ];
 
 const STICKER_SHAPES =
 [
-	{ value: 'full', label: 'Entière', round: false, cutout: false },
-	{ value: 'round', label: 'Ronde', round: true, cutout: false },
-	{ value: 'cutout', label: 'Détourée', round: false, cutout: true }
+	{ value: 'full', label: 'adjust.shape_full', round: false, cutout: false },
+	{ value: 'round', label: 'adjust.shape_round', round: true, cutout: false },
+	{ value: 'cutout', label: 'adjust.shape_cutout', round: false, cutout: true }
 ];
 
 function stickerShape(sticker)
@@ -914,7 +917,7 @@ function buildAdjustPanel(person)
 		const shownValue = slider.key === 'offset_y' ? -value : value;
 
 		row.className = 'adjust-row';
-		row.innerHTML = '<span>' + slider.label + '</span><input type="range" min="' + slider.min + '" max="' + slider.max + '" step="' + slider.step + '" value="' + shownValue + '"><output>' + slider.format(value) + '</output>';
+		row.innerHTML = '<span>' + escapeHtml(t(slider.label)) + '</span><input type="range" min="' + slider.min + '" max="' + slider.max + '" step="' + slider.step + '" value="' + shownValue + '"><output>' + slider.format(value) + '</output>';
 		const input = row.querySelector('input');
 		const output = row.querySelector('output');
 
@@ -934,13 +937,13 @@ function buildAdjustPanel(person)
 	const shapes = document.createElement('div');
 
 	shapes.className = 'adjust-shapes';
-	shapes.innerHTML = '<span>Forme</span>';
+	shapes.innerHTML = '<span>' + escapeHtml(t('adjust.shape')) + '</span>';
 	STICKER_SHAPES.forEach(shape =>
 	{
 		const chip = document.createElement('button');
 
 		chip.className = 'chip' + (stickerShape(person.sticker) === shape.value ? ' is-set' : '');
-		chip.textContent = shape.label;
+		chip.textContent = t(shape.label);
 		chip.addEventListener('click', async () =>
 		{
 			shapes.querySelectorAll('.chip').forEach(node => node.classList.toggle('is-set', node === chip));
@@ -949,11 +952,11 @@ function buildAdjustPanel(person)
 
 			if (shape.cutout)
 			{
-				chip.textContent = 'Détourage…';
+				chip.textContent = t('adjust.cutting_out');
 			}
 			renderStickerLayer();
 			await saveSticker(person, true);
-			chip.textContent = shape.label;
+			chip.textContent = t(shape.label);
 		});
 		shapes.appendChild(chip);
 	});
@@ -967,7 +970,7 @@ function buildAdjustPanel(person)
 		const chip = document.createElement('button');
 
 		chip.className = 'chip' + (person.sticker[toggle.key] ? ' is-set' : '');
-		chip.textContent = toggle.label;
+		chip.textContent = t(toggle.label);
 		chip.addEventListener('click', () =>
 		{
 			person.sticker[toggle.key] = !person.sticker[toggle.key];
@@ -981,7 +984,7 @@ function buildAdjustPanel(person)
 	const reset = document.createElement('button');
 
 	reset.className = 'link-button';
-	reset.textContent = 'Réinitialiser';
+	reset.textContent = t('adjust.reset');
 	reset.addEventListener('click', async () =>
 	{
 		try
@@ -1059,7 +1062,7 @@ async function uploadAndAssign(personId, files)
 
 	if (!images.length)
 	{
-		toast('Déposez une image (jpg, png, webp…)', 'error');
+		toast(t('toast.pick_image'), 'error');
 		return;
 	}
 	try
@@ -1106,7 +1109,7 @@ async function scanFrame()
 		const session = await request('POST', '/api/scan', { mode: 'frame', frame_number: state.frameNumber });
 
 		setSession(session);
-		toast(session.created ? plural(session.created, 'nouvelle personne ajoutée', 'nouvelles personnes ajoutées') : 'Aucune nouvelle personne sur cette image', session.created ? 'success' : 'info');
+		toast(session.created ? tc('toast.created', session.created) : t('toast.created_none'), session.created ? 'success' : 'info');
 		fetchFaces();
 	}
 	catch (error)
@@ -1149,7 +1152,7 @@ function renderLibrary()
 	{
 		const empty = document.createElement('div');
 		empty.className = 'library-empty';
-		empty.textContent = LIBRARY_KINDS[state.libraryKind].empty;
+		empty.textContent = t(LIBRARY_KINDS[state.libraryKind].empty);
 		fragment.appendChild(empty);
 	}
 	items.forEach(item =>
@@ -1159,8 +1162,8 @@ function renderLibrary()
 		node.className = 'library-item' + (item.kind === 'sticker' ? ' is-sticker' : '') + (item.id === state.armedId ? ' is-armed' : '');
 		node.dataset.id = item.id;
 		node.draggable = true;
-		node.title = item.name + ' — glissez sur une personne, ou touchez puis choisissez une personne';
-		node.innerHTML = '<img alt="" src="' + item.thumbnail + '"><span class="item-name">' + escapeHtml(item.name.replace(/\.[^.]+$/, '')) + '</span><span class="mini-remove remove" title="Supprimer">' + ICONS.close + '</span>';
+		node.title = t('library.item_title', { name: item.name });
+		node.innerHTML = '<img alt="" src="' + item.thumbnail + '"><span class="item-name">' + escapeHtml(item.name.replace(/\.[^.]+$/, '')) + '</span><span class="mini-remove remove" title="' + escapeHtml(t('library.remove')) + '">' + ICONS.close + '</span>';
 		node.addEventListener('click', () => setArmed(state.armedId === item.id ? null : item.id));
 		node.addEventListener('dragstart', event =>
 		{
@@ -1218,7 +1221,7 @@ function renderLibraryKind()
 
 	buttons.forEach(button => button.classList.toggle('is-active', button === activeButton));
 	placeSegmentThumb(el.libraryKind, activeButton);
-	el.libraryHint.textContent = LIBRARY_KINDS[state.libraryKind].hint;
+	el.libraryHint.textContent = t(LIBRARY_KINDS[state.libraryKind].hint);
 }
 
 function setLibraryKind(kind)
@@ -1238,7 +1241,7 @@ async function addSources(files)
 	}
 	try
 	{
-		toast('Analyse de ' + plural(images.length, 'image', 'images') + '…', 'info', 1800);
+		toast(tc('library.analysing', images.length), 'info', 1800);
 		const session = await upload('/api/library?kind=' + kind, images, 'files');
 
 		reportRejected(session.rejected, kind);
@@ -1246,7 +1249,7 @@ async function addSources(files)
 
 		if (session.added.length)
 		{
-			toast(plural(session.added.length, LIBRARY_KINDS[kind].added[0], LIBRARY_KINDS[kind].added[1]) + ' à la bibliothèque');
+			toast(tc(LIBRARY_KINDS[kind].added, session.added.length));
 		}
 	}
 	catch (error)
@@ -1259,7 +1262,7 @@ function reportRejected(rejected, kind = state.libraryKind)
 {
 	if (rejected && rejected.length)
 	{
-		toast(LIBRARY_KINDS[kind].rejected + rejected.join(', '), 'error', 5200);
+		toast(t(LIBRARY_KINDS[kind].rejected, { names: rejected.join(', ') }), 'error', 5200);
 	}
 }
 
@@ -1360,7 +1363,7 @@ function installGlobalDrop()
 		if (dragKind(event) === 'files')
 		{
 			depth++;
-			el.dropOverlayText.textContent = target() ? 'Déposez sur la vidéo/photo pour la remplacer, ou sur une personne' : 'Déposer pour ouvrir';
+			el.dropOverlayText.textContent = target() ? t('drop.replace') : t('drop.open');
 			el.dropOverlay.hidden = Boolean(target());
 			document.body.classList.add('is-dragging');
 		}
@@ -1402,16 +1405,16 @@ async function openTarget(file)
 	}
 	if (!file.type.startsWith('image/') && !file.type.startsWith('video/'))
 	{
-		toast('Choisissez une photo ou une vidéo', 'error');
+		toast(t('toast.pick_media'), 'error');
 		return;
 	}
 	state.importing = true;
-	showHud({ stage: 'Import', message: file.name, progress: 0 }, false);
+	showHud({ stage: t('import.stage'), message: file.name, progress: 0 }, false);
 	try
 	{
 		const session = await upload('/api/target', [ file ], 'file', progress =>
 		{
-			showHud(progress < 1 ? { stage: 'Import', message: file.name, progress: progress * 0.8 } : { stage: 'Détection des visages', message: 'Un instant…', progress: 0.9 }, false);
+			showHud(progress < 1 ? { stage: t('import.stage'), message: file.name, progress: progress * 0.8 } : { stage: t('import.detecting'), message: t('import.wait'), progress: 0.9 }, false);
 		});
 
 		state.frameNumber = 0;
@@ -1427,7 +1430,7 @@ async function openTarget(file)
 		}
 		else
 		{
-			toast(people().length ? plural(people().length, 'visage détecté', 'visages détectés') : 'Aucun visage détecté', people().length ? 'success' : 'info');
+			toast(people().length ? tc('toast.detected', people().length) : t('toast.detected_none'), people().length ? 'success' : 'info');
 		}
 	}
 	catch (error)
@@ -1456,7 +1459,7 @@ function renderTask()
 	{
 		el.scanProgress.hidden = false;
 		el.scanBar.style.width = Math.round(task.progress * 100) + '%';
-		el.scanText.textContent = (task.stage || 'Analyse') + ' · ' + Math.round(task.progress * 100) + '%' + (task.message ? ' · ' + task.message : '');
+		el.scanText.textContent = translateServer(task.stage || 'stage.scan') + ' · ' + Math.round(task.progress * 100) + '%' + (task.message ? ' · ' + translateServer(task.message, task.message_params) : '');
 	}
 	else
 	{
@@ -1480,8 +1483,8 @@ function showHud(task, cancellable)
 	const indeterminate = task.kind === 'setup' && !download;
 
 	el.hud.hidden = false;
-	el.hudStage.textContent = download ? 'Téléchargement du modèle' : task.stage || 'Préparation';
-	el.hudMessage.textContent = download ? download.name + ' · ' + formatBytes(download.received) + ' / ' + formatBytes(download.total) : task.message || (indeterminate ? 'Vérification des modèles…' : '');
+	el.hudStage.textContent = download ? t('hud.download') : translateServer(task.stage) || t('hud.preparing');
+	el.hudMessage.textContent = download ? download.name + ' · ' + formatBytes(download.received) + ' / ' + formatBytes(download.total) : translateServer(task.message, task.message_params) || (indeterminate ? t('hud.checking_models') : '');
 	el.hudPercent.textContent = indeterminate ? '' : Math.round(progress * 100) + '%';
 	el.hudRing.style.strokeDashoffset = String(326.73 * (1 - (indeterminate ? 0.25 : progress)));
 	el.hudRingBox.classList.toggle('is-indeterminate', indeterminate);
@@ -1492,9 +1495,9 @@ function formatBytes(bytes)
 {
 	if (bytes >= 1024 * 1024 * 1024)
 	{
-		return (bytes / (1024 * 1024 * 1024)).toFixed(1).replace('.', ',') + ' Go';
+		return t('unit.gigabytes', { value: formatDecimal(bytes / (1024 * 1024 * 1024), 1) });
 	}
-	return Math.round(bytes / (1024 * 1024)) + ' Mo';
+	return t('unit.megabytes', { value: Math.round(bytes / (1024 * 1024)) });
 }
 
 function renderDownload(download)
@@ -1506,9 +1509,9 @@ function renderDownload(download)
 		const percent = Math.round(download.progress * 100);
 
 		el.downloadName.textContent = download.name;
-		el.downloadPercent.textContent = percent + ' %';
+		el.downloadPercent.textContent = formatPercent(percent);
 		el.downloadBar.style.width = percent + '%';
-		el.downloadSize.textContent = formatBytes(download.received) + ' sur ' + formatBytes(download.total);
+		el.downloadSize.textContent = t('download.size', { received: formatBytes(download.received), total: formatBytes(download.total) });
 	}
 }
 
@@ -1588,7 +1591,7 @@ function onTaskFinished(task)
 
 	if (task.status === 'error')
 	{
-		toast(task.message, 'error', 6500);
+		toast(translateServer(task.message, task.message_params), 'error', 6500);
 	}
 	if (task.status === 'done' && task.kind === 'setup')
 	{
@@ -1597,11 +1600,11 @@ function onTaskFinished(task)
 	}
 	if (task.status === 'cancelled')
 	{
-		toast('Opération annulée', 'info');
+		toast(t('toast.cancelled'), 'info');
 	}
 	if (task.status === 'done' && task.kind === 'scan')
 	{
-		toast(people().length ? plural(people().length, 'personne trouvée', 'personnes trouvées') + ' dans la vidéo' : 'Aucun visage trouvé dans la vidéo', people().length ? 'success' : 'info');
+		toast(people().length ? tc('toast.found', people().length) : t('toast.found_none'), people().length ? 'success' : 'info');
 		fetchFaces();
 		invalidatePreview();
 	}
@@ -1649,10 +1652,10 @@ function showResult(output)
 	}
 	else
 	{
-		media.alt = 'Résultat';
+		media.alt = t('result.alt');
 	}
 	el.resultName.textContent = output.name;
-	el.revealLabel.textContent = state.options && state.options.platform === 'darwin' ? 'Afficher dans le Finder' : 'Afficher dans le dossier';
+	el.revealLabel.textContent = state.options && state.options.platform === 'darwin' ? t('result.reveal_finder') : t('result.reveal_folder');
 	el.resultMedia.replaceChildren(media);
 	el.downloadResult.href = url;
 	el.downloadResult.setAttribute('download', output.name);
@@ -1676,7 +1679,6 @@ function closeResult()
 const PROVIDER_LABELS =
 {
 	coreml: 'Apple Neural Engine',
-	cpu: 'Processeur (CPU)',
 	cuda: 'NVIDIA CUDA',
 	tensorrt: 'NVIDIA TensorRT',
 	directml: 'DirectML',
@@ -1693,55 +1695,55 @@ function settingsSchema()
 
 	return [
 		{
-			title: 'Remplacement',
+			title: t('settings.swap'),
 			rows:
 			[
-				{ type: 'select', key: 'face_swapper_model', label: 'Modèle', choices: options.face_swapper_models.map(model => ({ value: model.value, label: model.label + (model.downloaded ? '' : ' — à télécharger') })) },
-				{ type: 'select', key: 'face_swapper_pixel_boost', label: 'Résolution du visage', choices: pixelBoosts.map(value => ({ value, label: value.split('x')[0] + ' px' })) },
-				{ type: 'slider', key: 'face_swapper_weight', label: 'Force du visage source', min: 0, max: 1, step: 0.05, format: value => Math.round(value * 100) + ' %' }
+				{ type: 'select', key: 'face_swapper_model', label: t('settings.model'), choices: options.face_swapper_models.map(model => ({ value: model.value, label: model.label + (model.downloaded ? '' : t('settings.to_download')) })) },
+				{ type: 'select', key: 'face_swapper_pixel_boost', label: t('settings.pixel_boost'), choices: pixelBoosts.map(value => ({ value, label: value.split('x')[0] + ' px' })) },
+				{ type: 'slider', key: 'face_swapper_weight', label: t('settings.weight'), min: 0, max: 1, step: 0.05, format: value => formatPercent(Math.round(value * 100)) }
 			],
-			footnote: '« À télécharger » : le modèle n’est pas encore sur votre ordinateur, il se téléchargera automatiquement au premier aperçu. Une résolution plus haute est plus nette mais plus lente.'
+			footnote: t('settings.swap_note')
 		},
 		{
-			title: 'Amélioration',
+			title: t('settings.enhance'),
 			rows:
 			[
-				{ type: 'switch', key: 'face_enhancer', label: 'Rendre les visages plus nets' },
-				{ type: 'select', key: 'face_enhancer_model', label: 'Modèle', hidden: !settings.face_enhancer, choices: options.face_enhancer_models.map(model => ({ value: model.value, label: model.label + (model.downloaded ? '' : ' — à télécharger') })) },
-				{ type: 'slider', key: 'face_enhancer_blend', label: 'Intensité', hidden: !settings.face_enhancer, min: 0, max: 100, step: 1, format: value => value + ' %' }
+				{ type: 'switch', key: 'face_enhancer', label: t('settings.enhancer') },
+				{ type: 'select', key: 'face_enhancer_model', label: t('settings.model'), hidden: !settings.face_enhancer, choices: options.face_enhancer_models.map(model => ({ value: model.value, label: model.label + (model.downloaded ? '' : t('settings.to_download')) })) },
+				{ type: 'slider', key: 'face_enhancer_blend', label: t('settings.blend'), hidden: !settings.face_enhancer, min: 0, max: 100, step: 1, format: value => formatPercent(value) }
 			]
 		},
 		{
-			title: 'Masque',
+			title: t('settings.mask'),
 			rows:
 			[
-				{ type: 'switch', key: 'occlusion', label: 'Respecter mains, cheveux, lunettes' },
-				{ type: 'slider', key: 'face_mask_blur', label: 'Fondu des bords', min: 0, max: 1, step: 0.05, format: value => Math.round(value * 100) + ' %' }
+				{ type: 'switch', key: 'occlusion', label: t('settings.occlusion') },
+				{ type: 'slider', key: 'face_mask_blur', label: t('settings.mask_blur'), min: 0, max: 1, step: 0.05, format: value => formatPercent(Math.round(value * 100)) }
 			]
 		},
 		{
-			title: 'Reconnaissance',
+			title: t('settings.recognition'),
 			rows:
 			[
-				{ type: 'slider', key: 'reference_face_distance', label: 'Tolérance', min: 0.05, max: 0.95, step: 0.05, format: value => Math.round(value * 100) + ' %' },
-				{ type: 'select', key: 'face_detector_model', label: 'Détecteur', choices: options.face_detector_models.map(value => ({ value, label: value === 'many' ? 'Tous (le plus précis)' : value })) },
-				{ type: 'slider', key: 'face_detector_score', label: 'Seuil de détection', min: 0.05, max: 0.95, step: 0.05, format: value => Math.round(value * 100) + ' %' }
+				{ type: 'slider', key: 'reference_face_distance', label: t('settings.distance'), min: 0.05, max: 0.95, step: 0.05, format: value => formatPercent(Math.round(value * 100)) },
+				{ type: 'select', key: 'face_detector_model', label: t('settings.detector'), choices: options.face_detector_models.map(value => ({ value, label: value === 'many' ? t('settings.detector_all') : value })) },
+				{ type: 'slider', key: 'face_detector_score', label: t('settings.detector_score'), min: 0.05, max: 0.95, step: 0.05, format: value => formatPercent(Math.round(value * 100)) }
 			],
-			footnote: 'Tolérance plus haute : une personne de profil est mieux reconnue, mais deux personnes proches risquent d’être confondues. Seuil plus bas : détecte les petits visages.'
+			footnote: t('settings.recognition_note')
 		},
 		{
-			title: 'Export',
+			title: t('settings.export'),
 			rows:
 			[
-				{ type: 'slider', key: 'output_image_quality', label: 'Qualité photo', min: 10, max: 100, step: 1, format: value => value + ' %' },
-				{ type: 'slider', key: 'output_video_quality', label: 'Qualité vidéo', min: 10, max: 100, step: 1, format: value => value + ' %' }
+				{ type: 'slider', key: 'output_image_quality', label: t('settings.image_quality'), min: 10, max: 100, step: 1, format: value => formatPercent(value) },
+				{ type: 'slider', key: 'output_video_quality', label: t('settings.video_quality'), min: 10, max: 100, step: 1, format: value => formatPercent(value) }
 			]
 		},
 		{
-			title: 'Performance',
+			title: t('settings.performance'),
 			rows:
 			[
-				{ type: 'select', key: 'execution_provider', label: 'Calcul', choices: options.execution_providers.map(value => ({ value, label: PROVIDER_LABELS[value] || value })) }
+				{ type: 'select', key: 'execution_provider', label: t('settings.provider'), choices: options.execution_providers.map(value => ({ value, label: value === 'cpu' ? t('settings.provider_cpu') : PROVIDER_LABELS[value] || value })) }
 			]
 		}
 	];
@@ -1772,7 +1774,7 @@ function buildSettings()
 			fragment.appendChild(footnote);
 		}
 	});
-	fragment.appendChild(buildThemeGroup());
+	fragment.appendChild(buildAppearanceGroup());
 	el.settingsBody.replaceChildren(fragment);
 }
 
@@ -1820,27 +1822,53 @@ function buildSettingRow(row, value)
 	return node;
 }
 
-function buildThemeGroup()
+function buildAppearanceGroup()
 {
 	const wrapper = document.createElement('div');
-	const current = readTheme();
 
 	wrapper.innerHTML =
-		'<div class="group-title">Apparence</div>' +
-		'<div class="group"><div class="row"><label>Thème</label>' +
-		'<span class="select"><select id="setting-theme">' +
-		'<option value="auto">Automatique</option><option value="light">Clair</option><option value="dark">Sombre</option>' +
-		'</select></span></div></div>';
-	const select = wrapper.querySelector('select');
+		'<div class="group-title">' + escapeHtml(t('settings.appearance')) + '</div>' +
+		'<div class="group">' +
+		'<div class="row"><label for="setting-language">' + escapeHtml(t('settings.language')) + '</label>' +
+		'<span class="select"><select id="setting-language"></select></span></div>' +
+		'<div class="row"><label for="setting-theme">' + escapeHtml(t('settings.theme')) + '</label>' +
+		'<span class="select"><select id="setting-theme"></select></span></div>' +
+		'</div>';
+	const languageSelect = wrapper.querySelector('#setting-language');
+	const themeSelect = wrapper.querySelector('#setting-theme');
 
-	select.value = current;
-	select.addEventListener('change', () =>
+	LANGUAGES.forEach(language => languageSelect.add(new Option(I18N[language]['language.name'], language, false, language === LANGUAGE)));
+	[ 'auto', 'light', 'dark' ].forEach(theme => themeSelect.add(new Option(t('settings.theme_' + theme), theme, false, theme === readTheme())));
+	languageSelect.addEventListener('change', () => setLanguage(languageSelect.value));
+	themeSelect.addEventListener('change', () =>
 	{
-		writeTheme(select.value);
+		writeTheme(themeSelect.value);
 		applyTheme();
 		requestAnimationFrame(renderMode);
 	});
 	return wrapper;
+}
+
+function setLanguage(language)
+{
+	writeLanguage(language);
+	applyTranslations();
+
+	if (state.session)
+	{
+		render();
+		buildSettings();
+	}
+	if (state.faces.length)
+	{
+		renderFaces();
+	}
+	// the segmented controls follow the width of their translated labels
+	requestAnimationFrame(() =>
+	{
+		renderMode();
+		renderLibraryKind();
+	});
 }
 
 function saveSetting(key, value, rebuild)
@@ -1857,7 +1885,7 @@ function saveSetting(key, value, rebuild)
 
 			if (rebuild)
 			{
-				// the save may have just downloaded a model, so its « à télécharger » mark must go
+				// the save may have just downloaded a model, so its "to download" mark must go
 				state.options = await request('GET', '/api/options').catch(() => state.options);
 				buildSettings();
 			}
@@ -1882,7 +1910,7 @@ async function openSettings()
 	}
 	try
 	{
-		// models get downloaded by previews and renders, so the « à télécharger » marks must be fresh
+		// models get downloaded by previews and renders, so the "to download" marks must be fresh
 		state.options = await request('GET', '/api/options');
 	}
 	catch (error)
@@ -2006,7 +2034,7 @@ function installEvents()
 	{
 		if (!library().some(item => (item.kind || 'face') === state.libraryKind))
 		{
-			toast(state.libraryKind === 'sticker' ? 'Ajoutez d’abord des images' : 'Ajoutez d’abord des visages sources', 'info');
+			toast(state.libraryKind === 'sticker' ? t('toast.need_stickers') : t('toast.need_faces'), 'info');
 			return;
 		}
 		try
@@ -2154,7 +2182,7 @@ async function tryReconnect()
 	try
 	{
 		await syncWithServer();
-		toast('Reconnecté au serveur', 'success');
+		toast(t('toast.reconnected'), 'success');
 	}
 	catch (error)
 	{
@@ -2178,6 +2206,7 @@ function onFrameError()
 async function boot()
 {
 	applyTheme();
+	applyTranslations();
 	installEvents();
 
 	try
