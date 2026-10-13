@@ -48,7 +48,7 @@ from pydantic import BaseModel
 
 import facefusion.choices
 import facefusion.execution
-from facefusion import content_analyser, download, ffmpeg, logger, process_manager, state_manager
+from facefusion import content_analyser, download, face_mapper, ffmpeg, logger, process_manager, state_manager
 from facefusion.args import apply_args
 from facefusion.audio import create_empty_audio_frame
 from facefusion.core import common_pre_check, conditional_process, processors_pre_check
@@ -659,23 +659,23 @@ def install_progress_hooks() -> None:
 			TASK['message'] = str(frame_counter.get('done')) + ' / ' + str(frame_counter.get('total')) + ' images'
 		return result
 
-	original_analyse_sticker_frame = face_sticker_core.analyse_sticker_frame
+	original_analyse_track_frame = face_mapper.analyse_track_frame
 	analyse_counter = { 'done': 0 }
 
-	def analyse_sticker_frame(frame_number : int, temp_frame_path : str) -> Any:
-		result = original_analyse_sticker_frame(temp_frame_path = temp_frame_path, frame_number = frame_number)
+	def analyse_track_frame(frame_number : int, temp_frame_path : str) -> Any:
+		result = original_analyse_track_frame(frame_number, temp_frame_path)
 
-		# the sticker tracking pass reads the whole video before any frame gets rendered
+		# the tracking pass reads the whole video before any frame gets rendered
 		with frame_counter_lock:
 			analyse_counter['done'] += 1
-			TASK['stage'] = 'Suivi des têtes'
+			TASK['stage'] = 'Suivi des visages'
 			TASK['progress'] = max(TASK.get('progress'), 0.03 + 0.07 * min(1.0, analyse_counter.get('done') / frame_counter.get('total')))
 			TASK['message'] = str(min(analyse_counter.get('done'), frame_counter.get('total'))) + ' / ' + str(frame_counter.get('total')) + ' images analysées'
 		return result
 
 	image_to_video.process_video = process_video
 	image_to_video.process_temp_frame = process_temp_frame
-	face_sticker_core.analyse_sticker_frame = analyse_sticker_frame
+	face_mapper.analyse_track_frame = analyse_track_frame
 	wrap_stage(image_to_video, 'setup', 'Analyse du contenu', 0.0)
 	wrap_stage(image_to_video, 'extract_frames', 'Extraction des images', 0.03)
 	wrap_stage(image_to_video, 'merge_frames', 'Assemblage de la vidéo', 0.9)

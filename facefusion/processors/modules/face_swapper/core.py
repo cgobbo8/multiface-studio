@@ -13,7 +13,7 @@ from facefusion.common_helper import get_first, is_macos
 from facefusion.download import conditional_download_hashes, conditional_download_sources, resolve_download_url
 from facefusion.execution import has_execution_provider
 from facefusion.face_analyser import get_average_face, get_many_faces, get_one_face, scale_face
-from facefusion.face_mapper import get_face_mapping_source_face, get_face_mapping_source_frame, has_face_mapping_source, select_mapped_faces
+from facefusion.face_mapper import clear_face_tracks, get_face_mapping_source_face, get_face_mapping_source_frame, has_face_mapping_source, prepare_face_tracks, select_mapped_faces
 from facefusion.face_helper import paste_back, warp_face_by_face_landmark_5
 from facefusion.face_masker import create_area_mask, create_box_mask, create_occlusion_mask, create_region_mask
 from facefusion.face_selector import select_faces, sort_faces_by_order
@@ -568,7 +568,14 @@ def pre_process(mode : ProcessMode) -> bool:
 	return True
 
 
+def prepare_frames(temp_frame_paths : List[str]) -> None:
+	# mapped faces get tracked across the video, so short detection misses keep their swap
+	if state_manager.get_item('face_selector_mode') == 'mapping':
+		prepare_face_tracks(temp_frame_paths)
+
+
 def post_process() -> None:
+	clear_face_tracks()
 	read_static_image.cache_clear()
 	read_static_video_frame.cache_clear()
 	video_manager.clear_video_pool()

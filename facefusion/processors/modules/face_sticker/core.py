@@ -1,19 +1,18 @@
 import math
 from argparse import ArgumentParser
-from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy
 
-from facefusion import logger, process_manager, state_manager, translator
+from facefusion import logger, state_manager, translator
 from facefusion.face_analyser import scale_face
-from facefusion.face_mapper import get_face_mappings, has_face_mapping_sticker, select_sticker_faces
+from facefusion.face_mapper import clear_face_tracks, get_face_mappings, get_tracked_faces, has_face_mapping_sticker, prepare_face_tracks, select_sticker_faces
 from facefusion.filesystem import in_directory, is_image, is_video, same_file_extension
 from facefusion.processors.types import ProcessorOutputs
 from facefusion.types import ApplyStateItem, Args, Face, FaceMapping, FaceStickerOptions, InferencePool, ProcessMode, VisionFrame
-from facefusion.vision import read_image, read_static_image, read_static_video_frame
+from facefusion.vision import read_static_image, read_static_video_frame
 
 FaceStickerAnchor = Tuple[float, float, float, float, float, float]
 # head pose from the detector's 5 points, gains calibrated against solvePnP on sharp faces
@@ -22,10 +21,8 @@ HEAD_PITCH_GAIN = 1.2
 HEAD_PITCH_NEUTRAL = 0.69
 HEAD_ANGLE_LIMIT = 75.0
 STICKER_PERSPECTIVE = 3.0
-# seconds a briefly undetected head keeps its sticker, inside a track and at its edges
-STICKER_TRACK_GAP = 0.5
-STICKER_TRACK_HOLD = 0.15
-STICKER_TRACK_SMOOTHING = 2
+# frames on each side averaged against jitter, never across a cut
+STICKER_TRACK_SMOOTHING = 1
 STICKER_TRACKS : Dict[int, numpy.ndarray] = {}
 
 
@@ -67,6 +64,7 @@ def pre_process(mode : ProcessMode) -> bool:
 
 def post_process() -> None:
 	STICKER_TRACKS.clear()
+	clear_face_tracks()
 	read_sticker_frame.cache_clear()
 	prepare_sticker_frame.cache_clear()
 	read_static_image.cache_clear()
@@ -110,7 +108,8 @@ def prepare_sticker_frame(sticker_path : str, mirror : bool, round_shape : bool)
 
 def calculate_sticker_anchor(face : Face) -> FaceStickerAnchor:
 	start_x, start_y, end_x, end_y = face.bounding_box
-	face_landmark_5 = face.landmark_set.get('5/68')
+	# the detector's own points: '5/68' switches to the 68 landmarks around their confidence threshold and makes the tilt flicker
+	face_landmark_5 = face.landmark_set.get('5')
 	left_eye, right_eye = face_landmark_5[0], face_landmark_5[1]
 	face_angle = math.degrees(math.atan2(right_eye[1] - left_eye[1], right_eye[0] - left_eye[0]))
 	face_size = max(end_x - start_x, end_y - start_y)
@@ -210,12 +209,14 @@ def prepare_frames(temp_frame_paths : List[str]) -> None:
 	if not sticker_mapping_indices:
 		return
 
+	# the shared face tracks already hold every detection plus the bridged misses
+	prepare_face_tracks(temp_frame_paths)
 	raw_anchors = numpy.full((len(face_mappings), len(temp_frame_paths), 6), numpy.nan)
 
-	with ThreadPoolExecutor(max_workers = state_manager.get_item('execution_thread_count')) as executor:
-		for frame_number, sticker_anchors in executor.map(analyse_sticker_frame, range(len(temp_frame_paths)), temp_frame_paths):
-			for mapping_index, sticker_anchor in sticker_anchors:
-				raw_anchors[mapping_index, frame_number] = sticker_anchor
+	for frame_number, tracked_faces in enumerate(get_tracked_faces()):
+		for mapping_index, tracked_face in tracked_faces.items():
+			if mapping_index in sticker_mapping_indices:
+				raw_anchors[mapping_index, frame_number] = calculate_sticker_anchor(tracked_face)
 
 	video_fps = state_manager.get_item('output_video_fps') or 25.0
 
@@ -223,71 +224,43 @@ def prepare_frames(temp_frame_paths : List[str]) -> None:
 		STICKER_TRACKS[mapping_index] = build_sticker_track(raw_anchors[mapping_index], video_fps)
 
 
-def analyse_sticker_frame(frame_number : int, temp_frame_path : str) -> Tuple[int, List[Tuple[int, FaceStickerAnchor]]]:
-	sticker_anchors : List[Tuple[int, FaceStickerAnchor]] = []
-
-	if process_manager.is_stopping():
-		return frame_number, sticker_anchors
-
-	# uncached read: a whole video must not pile up in memory, the face store still keeps the detections
-	vision_frame = read_image(temp_frame_path)
-
-	if vision_frame is not None:
-		mapping_indices = { id(face_mapping): index for index, face_mapping in enumerate(get_face_mappings()) }
-
-		for target_face, face_mapping in select_sticker_faces(vision_frame):
-			sticker_anchors.append((mapping_indices.get(id(face_mapping)), calculate_sticker_anchor(target_face)))
-	return frame_number, sticker_anchors
-
-
 def build_sticker_track(raw_anchors : numpy.ndarray, video_fps : float) -> numpy.ndarray:
+	# short misses are already bridged by the shared face tracks, here the motion only gets smoothed
 	frame_total = len(raw_anchors)
 	sticker_track = raw_anchors.copy()
-	is_detected = ~numpy.isnan(raw_anchors[:, 0])
+	known_numbers = numpy.flatnonzero(~numpy.isnan(raw_anchors[:, 0]))
+	segment_ids = numpy.full(frame_total, -1)
+	segment_id = -1
+	previous_number = None
 
-	# a detection that disagrees with its neighbours is a glitch (wrong face, broken landmarks): treat it as a miss
-	for frame_number in numpy.flatnonzero(is_detected):
-		neighbour_numbers = [ number for number in range(frame_number - 3, frame_number + 4) if number != frame_number and 0 <= number < frame_total and is_detected[number] ]
+	# a hole or a jump (cut, another person taking over) starts a new segment, nothing is blended across it
+	for frame_number in known_numbers:
+		if previous_number is None or frame_number != previous_number + 1 or is_anchor_jump(raw_anchors[previous_number], raw_anchors[frame_number]):
+			segment_id += 1
+		segment_ids[frame_number] = segment_id
+		previous_number = frame_number
 
-		if len(neighbour_numbers) >= 2:
-			neighbour_anchor = numpy.median(raw_anchors[neighbour_numbers], axis = 0)
-			face_size = neighbour_anchor[2]
-			is_moved = math.dist(raw_anchors[frame_number, :2], neighbour_anchor[:2]) > face_size * 0.5
-			is_resized = abs(raw_anchors[frame_number, 2] - face_size) > face_size * 0.4
-			is_turned = numpy.abs(raw_anchors[frame_number, 3:] - neighbour_anchor[3:]).max() > 30
+	# a lone pose glitch between two agreeing neighbours takes their angles
+	for frame_number in known_numbers:
+		if 0 < frame_number < frame_total - 1 and segment_ids[frame_number - 1] == segment_ids[frame_number] == segment_ids[frame_number + 1]:
+			neighbour_angles = (raw_anchors[frame_number - 1, 3:] + raw_anchors[frame_number + 1, 3:]) / 2
+			is_agreeing = numpy.abs(raw_anchors[frame_number - 1, 3:] - raw_anchors[frame_number + 1, 3:]).max() < 15
+			is_glitch = numpy.abs(raw_anchors[frame_number, 3:] - neighbour_angles).max() > 25
 
-			if is_moved or is_resized or is_turned:
-				sticker_track[frame_number] = numpy.nan
+			if is_agreeing and is_glitch:
+				sticker_track[frame_number, 3:] = neighbour_angles
 
-	# bridge short misses by interpolating between the frames around them
-	gap_total = max(1, round(video_fps * STICKER_TRACK_GAP))
-	known_numbers = numpy.flatnonzero(~numpy.isnan(sticker_track[:, 0]))
+	smooth_track = sticker_track.copy()
 
-	for start_number, end_number in zip(known_numbers[:-1], known_numbers[1:]):
-		if 1 < end_number - start_number <= gap_total + 1:
-			missing_numbers = numpy.arange(start_number + 1, end_number)
-
-			for component in range(sticker_track.shape[1]):
-				sticker_track[missing_numbers, component] = numpy.interp(missing_numbers, [ start_number, end_number ], [ sticker_track[start_number, component], sticker_track[end_number, component] ])
-
-	# heads entering or leaving often lose detection a little early: hold the edges briefly
-	hold_total = round(video_fps * STICKER_TRACK_HOLD)
-	is_known = ~numpy.isnan(sticker_track[:, 0])
-	hold_track = sticker_track.copy()
-
-	for frame_number in numpy.flatnonzero(is_known):
-		for hold_number in range(frame_number - hold_total, frame_number + hold_total + 1):
-			if 0 <= hold_number < frame_total and numpy.isnan(hold_track[hold_number, 0]):
-				hold_track[hold_number] = sticker_track[frame_number]
-
-	# light centred moving average against jitter
-	is_known = ~numpy.isnan(hold_track[:, 0])
-	smooth_track = hold_track.copy()
-
-	for frame_number in numpy.flatnonzero(is_known):
-		window_numbers = [ number for number in range(frame_number - STICKER_TRACK_SMOOTHING, frame_number + STICKER_TRACK_SMOOTHING + 1) if 0 <= number < frame_total and is_known[number] ]
-		smooth_track[frame_number] = hold_track[window_numbers].mean(axis = 0)
+	for frame_number in known_numbers:
+		window_numbers = [ number for number in range(frame_number - STICKER_TRACK_SMOOTHING, frame_number + STICKER_TRACK_SMOOTHING + 1) if 0 <= number < frame_total and segment_ids[number] == segment_ids[frame_number] ]
+		smooth_track[frame_number] = sticker_track[window_numbers].mean(axis = 0)
 	return smooth_track
+
+
+def is_anchor_jump(anchor : numpy.ndarray, next_anchor : numpy.ndarray) -> bool:
+	face_size = (anchor[2] + next_anchor[2]) / 2
+	return math.dist(anchor[:2], next_anchor[:2]) > face_size * 0.35 or not 0.75 < next_anchor[2] / max(anchor[2], 1e-6) < 1.33
 
 
 def process_frame(inputs : dict) -> ProcessorOutputs:
