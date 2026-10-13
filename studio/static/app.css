@@ -410,9 +410,17 @@ p {
 
 .stage {
 	display: grid;
+	grid-template-columns: minmax(0, 1fr);
 	grid-template-rows: minmax(0, 1fr) auto;
 	gap: 16px;
+	min-width: 0;
 	min-height: 0;
+}
+
+/* grid items default to their min-content width: a long source strip would widen the whole column */
+.viewer,
+.library {
+	min-width: 0;
 }
 
 /* ------------------------------------------------ viewer */
@@ -824,6 +832,21 @@ input[type="range"]::-moz-range-thumb {
 	scrollbar-width: thin;
 	border-radius: var(--radius-md);
 	transition: background 0.2s, box-shadow 0.2s;
+}
+
+.library-strip.has-more-right {
+	-webkit-mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent);
+	mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent);
+}
+
+.library-strip.has-more-left {
+	-webkit-mask-image: linear-gradient(to right, transparent, #000 48px);
+	mask-image: linear-gradient(to right, transparent, #000 48px);
+}
+
+.library-strip.has-more-left.has-more-right {
+	-webkit-mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent);
+	mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent);
 }
 
 .library-strip.is-dragover {

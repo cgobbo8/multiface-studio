@@ -610,6 +610,16 @@ def install_progress_hooks() -> None:
 app = FastAPI(title = 'MultiFace Studio')
 
 
+@app.middleware('http')
+async def revalidate_interface(request : Any, call_next : Callable[[Any], Any]) -> Any:
+	response = await call_next(request)
+
+	# the interface changes with updates, browsers must not keep a stale copy
+	if not request.url.path.startswith('/api/'):
+		response.headers['Cache-Control'] = 'no-cache'
+	return response
+
+
 class ScanPayload(BaseModel):
 	mode : str = 'frame'
 	frame_number : int = 0

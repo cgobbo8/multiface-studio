@@ -862,6 +862,31 @@ function renderLibrary()
 		fragment.appendChild(node);
 	});
 	el.librarySt.replaceChildren(fragment);
+	updateStripFade();
+}
+
+function updateStripFade()
+{
+	const strip = el.librarySt;
+
+	strip.classList.toggle('has-more-left', strip.scrollLeft > 4);
+	strip.classList.toggle('has-more-right', strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 4);
+}
+
+function installStripScroll()
+{
+	// a mouse wheel only scrolls vertically, turn it into horizontal scrolling for the source strip
+	el.librarySt.addEventListener('wheel', event =>
+	{
+		if (Math.abs(event.deltaY) > Math.abs(event.deltaX) && el.librarySt.scrollWidth > el.librarySt.clientWidth)
+		{
+			el.librarySt.scrollLeft += event.deltaY;
+			event.preventDefault();
+			updateStripFade();
+		}
+	}, { passive: false });
+	el.librarySt.addEventListener('scroll', updateStripFade, { passive: true });
+	new ResizeObserver(updateStripFade).observe(el.librarySt);
 }
 
 function setArmed(sourceId)
@@ -1712,6 +1737,7 @@ function installEvents()
 	new ResizeObserver(() => layoutFrame()).observe(el.canvas);
 	window.addEventListener('resize', renderMode);
 	installCompareHandle();
+	installStripScroll();
 	installGlobalDrop();
 }
 
