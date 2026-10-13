@@ -2,7 +2,7 @@ module.exports =
 {
 	version: '7.0',
 	title: 'MultiFace Studio',
-	description: 'FaceFusion multi-visages : un nouveau visage pour chaque personne d’une photo ou d’une vidéo, en une seule passe.',
+	description: 'Multi-face FaceFusion: a new face for every person in a photo or a video, in a single pass.',
 	icon: 'icon.png',
 	menu: async (kernel, info) =>
 	{
@@ -21,7 +21,7 @@ module.exports =
 			{
 				default: true,
 				icon: 'fa-solid fa-plug',
-				text: 'Installation',
+				text: 'Installing',
 				href: 'install.js'
 			}];
 		}
@@ -37,7 +37,7 @@ module.exports =
 					{
 						default: true,
 						icon: 'fa-solid fa-rocket',
-						text: 'Ouvrir le studio',
+						text: 'Open Web UI',
 						href: local.url
 					},
 					{
@@ -60,7 +60,7 @@ module.exports =
 				{
 					default: true,
 					icon: 'fa-solid fa-terminal',
-					text: 'Mise à jour',
+					text: 'Updating',
 					href: 'update.js'
 				}];
 			}
@@ -70,7 +70,7 @@ module.exports =
 				{
 					default: true,
 					icon: 'fa-solid fa-terminal',
-					text: 'Réinitialisation',
+					text: 'Resetting',
 					href: 'reset.js'
 				}];
 			}
@@ -78,22 +78,22 @@ module.exports =
 			{
 				default: true,
 				icon: 'fa-solid fa-power-off',
-				text: 'Démarrer',
+				text: 'Start',
 				href: 'start.js'
 			},
 			{
 				icon: 'fa-solid fa-rotate',
-				text: 'Mettre à jour',
+				text: 'Update',
 				href: 'update.js'
 			},
 			{
 				icon: 'fa-solid fa-plug',
-				text: 'Installer',
+				text: 'Install',
 				href: 'install.js'
 			},
 			{
 				icon: 'fa-regular fa-circle-xmark',
-				text: 'Réinitialiser',
+				text: 'Reset',
 				href: 'reset.js'
 			}];
 		}
@@ -101,7 +101,7 @@ module.exports =
 		{
 			default: true,
 			icon: 'fa-solid fa-plug',
-			text: 'Installer',
+			text: 'Install',
 			href: 'install.js'
 		}];
 	}

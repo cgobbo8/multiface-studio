@@ -1,86 +1,86 @@
 # MultiFace Studio
 
-**Un nouveau visage pour chaque personne d’une photo ou d’une vidéo, en une seule passe.**
+**A new face for every person in a photo or a video, in a single pass.**
 
-FaceFusion remplace un visage à la fois. Avec 20 personnes sur une image, il faut donc lancer 20 rendus de suite.
-MultiFace Studio détecte toutes les personnes, vous laisse déposer un visage source en face de chacune, puis génère tout d’un coup.
-L’interface, en français ou en anglais (**Réglages → Apparence → Langue**), est inspirée d’Apple (verre dépoli, thème clair/sombre automatique).
+FaceFusion swaps one face at a time: with 20 people in a shot, you have to run 20 renders in a row.
+MultiFace Studio detects everyone, lets you drop a source face next to each person, then renders everything at once.
+The interface comes in English and French (**Settings → Appearance → Language**) and takes its cues from Apple (frosted glass, automatic light/dark theme).
 
-Le moteur est [FaceFusion 3.5.4](https://github.com/facefusion/facefusion), avec un petit patch (`app/patches/`).
+The engine is [FaceFusion 3.5.4](https://github.com/facefusion/facefusion) with a small patch (`app/patches/`).
 
-> Projet communautaire **non officiel**, sans lien avec l’équipe FaceFusion.
+> **Unofficial** community project, not affiliated with the FaceFusion team.
 
-## Fonctionnalités
+## Features
 
-- **Détection de toutes les personnes** : sur une photo, chaque visage ; sur une vidéo, le studio parcourt toute la vidéo et regroupe les apparitions d’une même personne, même de profil (empreintes faciales, plusieurs angles par personne).
-- **Un visage source par personne** : bibliothèque de visages, glisser-déposer ou « sélectionner puis toucher », répartition automatique dans l’ordre. Les personnes sans source restent intactes.
-- **Images collées sur les têtes (mèmes)** : n’importe quelle image (PNG transparent idéal : emoji, tête détourée, logo…) suit la tête d’une personne, avec sa position et son inclinaison. L’image pivote aussi en **3D** quand la tête tourne ou hoche (pose estimée à partir des 5 points du détecteur de visage, perspective identique au CSS 3D de l’aperçu, intensité réglable). En vidéo, le mouvement de l’image est légèrement lissé, sans jamais traverser un changement de plan. Taille, décalage, rotation et miroir se règlent par personne, avec un aperçu en direct, et la forme se choisit : image entière, ronde, ou **détourée** (le fond et les épaules sont retirés automatiquement par le modèle MODNet, 25 Mo, téléchargé au premier usage). Une simple photo de quelqu’un est recadrée automatiquement autour de sa tête. On peut mélanger remplacement de visage et images dans un même rendu.
-- **Visages couchés ou à l’envers** : le détecteur ne reconnaît que les visages droits, le studio cherche aussi sur l’image tournée de 90° dans les deux sens. Une personne allongée est donc détectée, remplacée, et l’image collée suit sa tête. Réglable dans **Réglages → Reconnaissance** (la détection est un peu plus lente).
-- **Attribution un-pour-un** : deux personnes qui se ressemblent ne reçoivent jamais la même source sur une même image.
-- **Rémanence en vidéo** : quand la détection rate un visage quelques images (flou, main devant), le remplacement ou l’image collée continue (jusqu’à 0,25 s), seulement si la tête est restée quasiment au même endroit. Un visage détecté mais pas reconnu (profil) est rattaché à la bonne personne. Rien n’est jamais comblé à travers un changement de plan ni sur une autre personne.
-- **Aperçu et comparaison avant/après** sur n’importe quelle image de la vidéo.
-- **Extrait vidéo** : sous la vidéo, une bande d’images avec deux poignées à faire glisser (comme dans Photos) ; les touches **I** et **O** placent le début et la fin sur l’image affichée. Seul l’extrait est analysé et généré.
-- Progression du rendu, annulation.
-- **Téléchargement des modèles visible** : nom, pourcentage et Mo reçus.
-- Réglages : modèle de remplacement, résolution, force du visage source, amélioration (GFPGAN, CodeFormer…), respect des occlusions, tolérance de reconnaissance, détecteur, qualité d’export, accélération matérielle.
+- **Every person detected**: each face in a photo; in a video, the studio goes through the whole clip and groups the appearances of the same person, even in profile (face embeddings, several angles per person).
+- **One source face per person**: face library, drag and drop or "select, then tap", automatic assignment in order. People without a source stay untouched.
+- **Images pasted on heads (memes)**: any image (a transparent PNG works best: emoji, cut-out head, logo…) follows a person's head, with its position and tilt. The image also turns in **3D** when the head turns or nods (pose estimated from the face detector's 5 points, the same perspective as the preview's CSS 3D, adjustable strength). In videos, the image motion is lightly smoothed, never across a cut. Size, offset, rotation and mirroring are set per person with a live preview, and the shape can be whole, round or **cut out** (the background and shoulders are removed automatically by the MODNet model, 25 MB, downloaded on first use). A plain photo of someone is cropped around their head automatically. Face swaps and images can be mixed in the same render.
+- **Lying or upside-down faces**: the detector only recognises upright faces, so the studio also searches the frame turned 90° both ways. A person lying down gets detected and swapped, and pasted images follow their head. It can be turned off in **Settings → Recognition** (detection is a bit slower with it).
+- **One-to-one assignment**: two lookalikes never get the same source in the same frame.
+- **Persistence in videos**: when detection misses a face for a few frames (blur, a hand in front), the swap or the pasted image carries on (up to 0.25 s), only if the head stayed almost in place. A face that is detected but not recognised (profile) is attached to the right person. Nothing is ever filled in across a cut or onto another person.
+- **Preview and before/after comparison** on any frame of the video.
+- **Video clip**: under the video, a filmstrip with two handles to drag (as in Photos); the **I** and **O** keys set the start and the end at the current frame. Only the clip gets analysed and rendered.
+- Render progress and cancellation.
+- **Visible model downloads**: name, percentage and MB received.
+- Settings: swap model, resolution, source face strength, enhancement (GFPGAN, CodeFormer…), occlusion handling, recognition tolerance, detector, export quality, hardware acceleration.
 
 ## Installation (Pinokio)
 
-1. Dans Pinokio, **Download from URL** → collez `https://github.com/cgobbo8/multiface-studio`.
-2. Cliquez sur **Installer**. Le script clone FaceFusion 3.5.4, applique le patch et crée un environnement conda (Python 3.12, ffmpeg, onnxruntime adapté à votre GPU).
-3. Cliquez sur **Démarrer**, puis **Ouvrir le studio**.
+1. In Pinokio, **Download from URL** → paste `https://github.com/cgobbo8/multiface-studio`.
+2. Click **Install**. The script clones FaceFusion 3.5.4, applies the patch and creates a conda environment (Python 3.12, ffmpeg, onnxruntime matching your GPU).
+3. Click **Start**, then **Open Web UI**.
 
-Si le lanceur officiel FaceFusion est déjà installé dans Pinokio (`api/facefusion-pinokio.git`), ses modèles sont réutilisés via un lien : rien n’est retéléchargé.
-Sinon, les modèles de base (~1 Go) sont téléchargés au premier démarrage, avec la progression affichée dans le studio.
+If the official FaceFusion launcher is already installed in Pinokio (`api/facefusion-pinokio.git`), its models are reused through a link: nothing is downloaded again.
+Otherwise the base models (~1 GB) are downloaded on the first start, with their progress shown in the studio.
 
-- **Mettre à jour** : récupère la dernière version du lanceur et réapplique le patch.
-- **Réinitialiser** : supprime le moteur et l’environnement. Les modèles partagés avec le lanceur officiel ne sont pas touchés.
+- **Update**: pulls the latest launcher and applies the patch again.
+- **Reset**: removes the engine and the environment. Models shared with the official launcher are left alone.
 
-## Utilisation
+## Usage
 
-1. **Ouvrir** une photo ou une vidéo (ou la glisser dans la fenêtre). Pour une vidéo, l’analyse de toutes les personnes démarre automatiquement.
-   Pour passer à un autre fichier : **Changer de vidéo** / **Changer de photo** (⌘O ou Ctrl+O), ou glissez le nouveau fichier sur l’image. Si des sources sont déjà associées, une confirmation s’affiche avant de les retirer ; la bibliothèque de sources est conservée.
-2. Dans **Sources**, ajoutez les photos des nouveaux visages (onglet **Visages**) et/ou des images à coller (onglet **Images**).
-3. Associez une source à chaque personne voulue :
-   - glissez-la sur le « + » de la personne ;
-   - ou touchez-la, puis touchez la personne (dans la liste ou directement sur l’image).
-   - Pour une image, touchez **Ajuster** sur la personne : taille, position, rotation, effet 3D, miroir et forme (entière, ronde, détourée). L’onglet **Aperçu** s’ouvre et l’image s’y met à jour en direct.
-4. Vérifiez avec **Aperçu** ou **Comparer**.
-5. **Générer**. Le résultat est enregistré dans `app/workspace/outputs/`.
+1. **Open** a photo or a video (or drag it into the window). For a video, the analysis of every person starts automatically.
+   To switch to another file: **Change video** / **Change photo** (⌘O or Ctrl+O), or drag the new file onto the frame. If sources are already assigned, you are asked to confirm before they are removed; the source library is kept.
+2. In **Sources**, add photos of the new faces (**Faces** tab) and/or images to paste (**Images** tab).
+3. Assign a source to each person you want to change:
+   - drag it onto the person's "+";
+   - or tap it, then tap the person (in the list or right on the frame).
+   - For an image, tap the **Adjust** button (sliders icon) on the person: size, position, rotation, 3D effect, mirror and shape (whole, round, cut out). The **Preview** tab opens and the image updates live.
+4. Check the result with **Preview** or **Compare**.
+5. **Generate**. The result is saved in `app/workspace/outputs/`.
 
-Pour ne garder qu’un passage d’une vidéo, faites glisser les poignées de la bande d’images sous la vidéo, ou placez-vous sur une image et appuyez sur **I** (début) ou **O** (fin).
-Une personne a été manquée dans une vidéo ? Placez-vous sur une image où elle apparaît et touchez **Cette image**.
-Sur une grande photo de groupe avec de petits visages, baissez le **Seuil de détection** ou choisissez le détecteur **Tous**.
+To keep only part of a video, drag the handles of the filmstrip under the video, or go to a frame and press **I** (start) or **O** (end).
+Someone was missed in a video? Go to a frame where they appear and tap **This frame**.
+On a large group photo with small faces, lower the **Detection threshold** or pick the **All** detector.
 
 ## API
 
-Le studio est piloté par une API HTTP locale (le port est affiché au démarrage, ici `7870`). Tout ce que fait l’interface est accessible par script.
+The studio is driven by a local HTTP API (the port is printed at startup, `7870` here). Everything the interface does can be scripted.
 
-| Méthode | Route | Rôle |
+| Method | Route | Purpose |
 | --- | --- | --- |
-| `POST` | `/api/target` | Importer la cible (champ `file`) ; détecte les visages de la première image |
-| `POST` | `/api/scan` | `{ "mode": "video", "samples": 60 }` analyse toute la vidéo (tâche) ; `{ "mode": "frame", "frame_number": 120 }` ajoute les personnes d’une image |
-| `POST` | `/api/library?kind=face` | Ajouter des visages sources (champ `files`, plusieurs fichiers) |
-| `POST` | `/api/library?kind=sticker` | Ajouter des images à coller sur les têtes |
-| `POST` | `/api/people/{id}/source` | `{ "source_id": "…" }` associe une source à une personne (`null` pour la retirer) |
-| `POST` | `/api/people/{id}/sticker` | Règle l’image collée : `scale`, `offset_x`, `offset_y` (en tailles de visage), `rotation` (°), `follow_rotation`, `depth` (effet 3D, 0–1), `mirror`, `round`, `cutout` (détourage), ou `{ "reset": true }` |
-| `POST` | `/api/people/assign-in-order?kind=face` | Répartit les sources (`face` ou `sticker`) dans l’ordre |
-| `POST` | `/api/settings` | Modifie les réglages (voir `settings` dans `/api/state`) |
-| `POST` | `/api/trim` | `{ "start": 0, "end": 300 }` extrait vidéo, en numéros d’image (fin exclue, `null` = bord de la vidéo) |
-| `GET` | `/api/preview?frame_number=0` | Aperçu JPEG d’une image |
-| `POST` | `/api/render` | Lance le rendu (tâche) |
-| `GET` | `/api/task` | Tâche en cours : `status`, `progress`, `stage`, `download`, `result` |
-| `POST` | `/api/task/cancel` | Annule la tâche en cours |
-| `GET` | `/api/output/{name}` | Télécharge un résultat |
-| `GET` | `/api/state` | État complet : cible, personnes, bibliothèque, réglages, tâche |
+| `POST` | `/api/target` | Imports the target (`file` field) and detects the faces of its first frame |
+| `POST` | `/api/scan` | `{ "mode": "video", "samples": 60 }` analyses the whole video (task); `{ "mode": "frame", "frame_number": 120 }` adds the people of one frame |
+| `POST` | `/api/library?kind=face` | Adds source faces (`files` field, several files) |
+| `POST` | `/api/library?kind=sticker` | Adds images to paste on heads |
+| `POST` | `/api/people/{id}/source` | `{ "source_id": "…" }` assigns a source to a person (`null` removes it) |
+| `POST` | `/api/people/{id}/sticker` | Sets the pasted image: `scale`, `offset_x`, `offset_y` (in face sizes), `rotation` (°), `follow_rotation`, `depth` (3D effect, 0–1), `mirror`, `round`, `cutout`, or `{ "reset": true }` |
+| `POST` | `/api/people/assign-in-order?kind=face` | Assigns the sources (`face` or `sticker`) in order |
+| `POST` | `/api/settings` | Changes the settings (see `settings` in `/api/state`) |
+| `POST` | `/api/trim` | `{ "start": 0, "end": 300 }` video clip, in frame numbers (end excluded, `null` = edge of the video) |
+| `GET` | `/api/preview?frame_number=0` | JPEG preview of a frame |
+| `POST` | `/api/render` | Starts the render (task) |
+| `GET` | `/api/task` | Current task: `status`, `progress`, `stage`, `message`, `download`, `result` |
+| `POST` | `/api/task/cancel` | Cancels the current task |
+| `GET` | `/api/output/{name}` | Downloads a result |
+| `GET` | `/api/state` | Full state: target, people, library, settings, task |
 
-Les textes renvoyés par le serveur (`stage` et `message` d’une tâche, `error` d’une requête refusée) sont des clés de traduction, par exemple `stage.swap` ou `message.frames` avec ses valeurs dans `message_params`. Les textes français et anglais sont dans `app/studio/static/i18n.js`.
+Texts sent by the server (a task's `stage` and `message`, a refused request's `error`) are translation keys, for example `stage.swap`, or `message.frames` with its values in `message_params`. The English and French texts live in `app/studio/static/i18n.js`.
 
 ### curl
 
 ```bash
 API=http://127.0.0.1:7870
-curl -s -F "file=@groupe.jpg" $API/api/target
+curl -s -F "file=@group.jpg" $API/api/target
 curl -s -F "files=@alice.jpg" -F "files=@bob.jpg" $API/api/library
 curl -s -X POST $API/api/people/assign-in-order
 curl -s -X POST $API/api/render
@@ -95,7 +95,7 @@ import requests
 
 api = 'http://127.0.0.1:7870'
 
-with open('groupe.jpg', 'rb') as target:
+with open('group.jpg', 'rb') as target:
 	session = requests.post(api + '/api/target', files = { 'file': target }).json()
 
 with open('alice.jpg', 'rb') as alice, open('bob.jpg', 'rb') as bob:
@@ -141,23 +141,22 @@ async function render(targetFile, sourceFiles)
 }
 ```
 
-## Ce que change le patch du moteur
+## What the engine patch changes
 
-- `facefusion/face_mapper.py` (nouveau) : associe chaque visage détecté à la personne la plus proche, avec une attribution un-pour-un.
-- `face_selector.py` : mode de sélection interne `mapping`.
-- `processors/modules/face_swapper/core.py` : en mode `mapping`, chaque visage reçoit son propre visage source.
-- `processors/modules/face_sticker/` (nouveau) : processeur qui colle une image sur la tête des personnes associées, en suivant leur position, leur taille, leur inclinaison et leur rotation 3D (pose estimée sur les 5 points du détecteur, projection en perspective, lissage par plan).
-- `processors/modules/face_sticker/` : l’inclinaison est lissée sans passer par 0° quand une tête à l’envers oscille entre +179° et −179°.
-- `face_mapper.py` : en vidéo, un pré-passage suit chaque personne sur toute la vidéo et comble prudemment les absences courtes ; le remplacement, l’amélioration et les images collées s’en servent.
-- `workflows/image_to_video.py` : les processeurs peuvent préparer toute la vidéo avant le rendu (`prepare_frames`) et reçoivent le numéro de l’image traitée.
-- `video_manager.py` : lecture vidéo protégée par un verrou ; corrige un plantage aléatoire de libavcodec (`pthread_frame.c`, `async_lock`) quand plusieurs threads lisent la vidéo.
-- `types.py`, `choices.py` : types du mode `mapping` (non exposé dans l’interface Gradio d’origine).
+- `facefusion/face_mapper.py` (new): matches each detected face with the closest person, one-to-one.
+- `face_selector.py`: internal `mapping` selector mode.
+- `processors/modules/face_swapper/core.py`: in `mapping` mode, each face gets its own source face.
+- `processors/modules/face_sticker/` (new): a processor that pastes an image on the head of the mapped people, following their position, size, tilt and 3D rotation (pose estimated from the detector's 5 points, perspective projection, smoothing within each shot that stays correct for upside-down heads).
+- `face_mapper.py`: in videos, a first pass tracks every person through the whole video and carefully fills short gaps; the swapper, the enhancer and the pasted images rely on it.
+- `workflows/image_to_video.py`: processors can prepare the whole video before rendering (`prepare_frames`) and receive the number of the frame being processed.
+- `video_manager.py`: video reads are guarded by a lock, which fixes a random libavcodec crash (`pthread_frame.c`, `async_lock`) when several threads read the video.
+- `types.py`, `choices.py`: types of the `mapping` mode (not exposed in the original Gradio interface).
 
-## Licence et usage responsable
+## License and responsible use
 
-Voir [LICENSE.md](LICENSE.md).
+See [LICENSE.md](LICENSE.md).
 
-- FaceFusion est distribué sous licence **OpenRAIL-AS** (© Henry Ruhs). Le patch est une modification de FaceFusion et suit cette licence, y compris ses restrictions d’usage.
-- Les modèles ne sont pas inclus : FaceFusion les télécharge depuis ses propres serveurs, chacun avec sa licence (plusieurs sont **non commerciaux**, par exemple InSwapper, SimSwap, BlendSwap).
-- L’analyse de contenu de FaceFusion (NSFW) reste active.
-- N’utilisez que des visages de personnes qui ont donné leur accord, et ne présentez jamais un résultat comme authentique.
+- FaceFusion is distributed under the **OpenRAIL-AS** license (© Henry Ruhs). The patch modifies FaceFusion and follows this license, including its use-based restrictions.
+- Models are not included: FaceFusion downloads them from its own servers, each under its own license (several are **non-commercial**, for example InSwapper, SimSwap and BlendSwap).
+- FaceFusion's content analyser (NSFW) stays active.
+- Only use the faces of people who gave their consent, and never present a result as authentic.

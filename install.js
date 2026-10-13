@@ -148,8 +148,8 @@ module.exports = async kernel =>
 				method: 'input',
 				params:
 				{
-					title: 'Installation terminée',
-					description: 'Revenez au tableau de bord pour démarrer MultiFace Studio.'
+					title: 'Installation completed',
+					description: 'Click "Start" on the left sidebar to launch MultiFace Studio.'
 				}
 			}
 		]
