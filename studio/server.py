@@ -31,6 +31,8 @@ CLI = argparse.ArgumentParser(description = 'MultiFace Studio')
 CLI.add_argument('--host', default = '127.0.0.1')
 CLI.add_argument('--port', type = int, default = 7870)
 CLI.add_argument('--open-browser', action = 'store_true')
+# served to other machines: nothing may run on the host on behalf of a visitor
+CLI.add_argument('--remote', action = 'store_true')
 CLI_ARGS = CLI.parse_args()
 
 # facefusion resolves its modules and models relative to the working directory and parses sys.argv while building its program
@@ -740,7 +742,8 @@ def get_options() -> Dict[str, Any]:
 		'face_enhancer_models': [ { 'value': model, 'label': model, 'downloaded': is_model_downloaded(face_enhancer_core, model) } for model in face_enhancer_choices.face_enhancer_models ],
 		'face_detector_models': facefusion.choices.face_detector_models,
 		'execution_providers': facefusion.execution.get_available_execution_providers(),
-		'platform': sys.platform
+		'platform': sys.platform,
+		'remote': CLI_ARGS.remote
 	}
 
 
@@ -1324,6 +1327,8 @@ def get_output(output_name : str) -> FileResponse:
 
 @app.post('/api/reveal')
 def reveal_output() -> Dict[str, Any]:
+	if CLI_ARGS.remote:
+		raise HTTPException(404, 'error.file_not_found')
 	output = SESSION.get('output')
 	output_path = OUTPUT_PATH / output.get('name') if output else None
 	OUTPUT_PATH.mkdir(parents = True, exist_ok = True)

@@ -1904,6 +1904,8 @@ function showResult(output)
 	}
 	el.resultName.textContent = output.name;
 	el.revealLabel.textContent = state.options && state.options.platform === 'darwin' ? t('result.reveal_finder') : t('result.reveal_folder');
+	// on a shared server the folder is on another machine, only the download makes sense
+	el.revealResult.hidden = Boolean(state.options && state.options.remote);
 	el.resultMedia.replaceChildren(media);
 	el.downloadResult.href = url;
 	el.downloadResult.setAttribute('download', output.name);

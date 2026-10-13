@@ -1,0 +1,5 @@
+# the image only needs the studio and the engine patch, the engine itself is cloned during the build
+*
+!app/patches
+!app/studio
+app/studio/**/__pycache__
