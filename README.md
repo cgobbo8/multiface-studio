@@ -14,6 +14,7 @@ Le moteur est [FaceFusion 3.5.4](https://github.com/facefusion/facefusion), avec
 
 - **Détection de toutes les personnes** : sur une photo, chaque visage ; sur une vidéo, le studio parcourt toute la vidéo et regroupe les apparitions d’une même personne, même de profil (empreintes faciales, plusieurs angles par personne).
 - **Un visage source par personne** : bibliothèque de visages, glisser-déposer ou « sélectionner puis toucher », répartition automatique dans l’ordre. Les personnes sans source restent intactes.
+- **Images collées sur les têtes (mèmes)** : n’importe quelle image (PNG transparent idéal : emoji, tête détourée, logo…) suit la tête d’une personne, avec sa position et son inclinaison. L’image pivote aussi en **3D** quand la tête tourne ou hoche (pose estimée à partir de 68 points du visage, perspective identique au CSS 3D de l’aperçu, intensité réglable). Taille, décalage, rotation et miroir se règlent par personne, avec un aperçu en direct, et la forme se choisit : image entière, ronde, ou **détourée** (le fond et les épaules sont retirés automatiquement par le modèle MODNet, 25 Mo, téléchargé au premier usage). Une simple photo de quelqu’un est recadrée automatiquement autour de sa tête. On peut mélanger remplacement de visage et images dans un même rendu.
 - **Attribution un-pour-un** : deux personnes qui se ressemblent ne reçoivent jamais la même source sur une même image.
 - **Aperçu et comparaison avant/après** sur n’importe quelle image de la vidéo.
 - **Extrait vidéo** (début/fin), progression du rendu, annulation.
@@ -35,10 +36,11 @@ Sinon, les modèles de base (~1 Go) sont téléchargés au premier démarrage, a
 ## Utilisation
 
 1. **Ouvrir** une photo ou une vidéo (ou la glisser dans la fenêtre). Pour une vidéo, l’analyse de toutes les personnes démarre automatiquement.
-2. Ajoutez les photos des nouveaux visages dans **Visages sources**.
-3. Associez un visage source à chaque personne voulue :
-   - glissez le visage sur le « + » de la personne ;
-   - ou touchez le visage, puis la personne (dans la liste ou directement sur l’image).
+2. Dans **Sources**, ajoutez les photos des nouveaux visages (onglet **Visages**) et/ou des images à coller (onglet **Images**).
+3. Associez une source à chaque personne voulue :
+   - glissez-la sur le « + » de la personne ;
+   - ou touchez-la, puis touchez la personne (dans la liste ou directement sur l’image).
+   - Pour une image, touchez **Ajuster** sur la personne : taille, position, rotation, effet 3D, miroir et forme (entière, ronde, détourée). L’onglet **Aperçu** s’ouvre et l’image s’y met à jour en direct.
 4. Vérifiez avec **Aperçu** ou **Comparer**.
 5. **Générer**. Le résultat est enregistré dans `app/workspace/outputs/`.
 
@@ -53,9 +55,11 @@ Le studio est piloté par une API HTTP locale (le port est affiché au démarrag
 | --- | --- | --- |
 | `POST` | `/api/target` | Importer la cible (champ `file`) ; détecte les visages de la première image |
 | `POST` | `/api/scan` | `{ "mode": "video", "samples": 60 }` analyse toute la vidéo (tâche) ; `{ "mode": "frame", "frame_number": 120 }` ajoute les personnes d’une image |
-| `POST` | `/api/library` | Ajouter des visages sources (champ `files`, plusieurs fichiers) |
+| `POST` | `/api/library?kind=face` | Ajouter des visages sources (champ `files`, plusieurs fichiers) |
+| `POST` | `/api/library?kind=sticker` | Ajouter des images à coller sur les têtes |
 | `POST` | `/api/people/{id}/source` | `{ "source_id": "…" }` associe une source à une personne (`null` pour la retirer) |
-| `POST` | `/api/people/assign-in-order` | Répartit les sources dans l’ordre |
+| `POST` | `/api/people/{id}/sticker` | Règle l’image collée : `scale`, `offset_x`, `offset_y` (en tailles de visage), `rotation` (°), `follow_rotation`, `depth` (effet 3D, 0–1), `mirror`, `round`, `cutout` (détourage), ou `{ "reset": true }` |
+| `POST` | `/api/people/assign-in-order?kind=face` | Répartit les sources (`face` ou `sticker`) dans l’ordre |
 | `POST` | `/api/settings` | Modifie les réglages (voir `settings` dans `/api/state`) |
 | `POST` | `/api/trim` | `{ "start": 0, "end": 300 }` extrait vidéo, en numéros d’image |
 | `GET` | `/api/preview?frame_number=0` | Aperçu JPEG d’une image |
@@ -135,6 +139,7 @@ async function render(targetFile, sourceFiles)
 - `facefusion/face_mapper.py` (nouveau) : associe chaque visage détecté à la personne la plus proche, avec une attribution un-pour-un.
 - `face_selector.py` : mode de sélection interne `mapping`.
 - `processors/modules/face_swapper/core.py` : en mode `mapping`, chaque visage reçoit son propre visage source.
+- `processors/modules/face_sticker/` (nouveau) : processeur qui colle une image sur la tête des personnes associées, en suivant leur position, leur taille, leur inclinaison et leur rotation 3D (pose de la tête par `solvePnP`, projection en perspective).
 - `video_manager.py` : lecture vidéo protégée par un verrou ; corrige un plantage aléatoire de libavcodec (`pthread_frame.c`, `async_lock`) quand plusieurs threads lisent la vidéo.
 - `types.py`, `choices.py` : types du mode `mapping` (non exposé dans l’interface Gradio d’origine).
 

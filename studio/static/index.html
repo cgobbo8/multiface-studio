@@ -67,6 +67,7 @@
 					<figure class="frame" id="frame" hidden>
 						<img id="frame-original" alt="Image cible" draggable="false">
 						<img id="frame-result" alt="Aperçu" draggable="false" hidden>
+						<div class="sticker-layer" id="sticker-layer" hidden></div>
 						<div class="face-layer" id="face-layer"></div>
 						<div class="compare-handle" id="compare-handle" hidden><span></span></div>
 						<div class="frame-spinner" id="frame-spinner" hidden><span class="spinner"></span></div>
@@ -96,8 +97,15 @@
 			<div class="card glass library" id="library">
 				<div class="library-header">
 					<div>
-						<h2>Visages sources</h2>
-						<p>Glissez-les sur une personne, ou sélectionnez-en un puis touchez une personne.</p>
+						<div class="library-title">
+							<h2>Sources</h2>
+							<div class="segmented segmented-small" id="library-kind" role="tablist">
+								<span class="segmented-thumb"></span>
+								<button role="tab" data-kind="face" class="is-active">Visages</button>
+								<button role="tab" data-kind="sticker">Images</button>
+							</div>
+						</div>
+						<p id="library-hint"></p>
 					</div>
 					<button class="button button-tinted" id="add-sources">
 						<svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>

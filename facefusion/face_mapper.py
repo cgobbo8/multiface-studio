@@ -20,6 +20,10 @@ def has_face_mapping_source() -> bool:
 	return False
 
 
+def has_face_mapping_sticker() -> bool:
+	return any(face_mapping.get('sticker_path') for face_mapping in get_face_mappings())
+
+
 def calculate_face_mapping_distance(face : Face, face_mapping : FaceMapping) -> float:
 	face_distances = [ 1 - numpy.dot(face.embedding_norm, reference_embedding) for reference_embedding in face_mapping.get('reference_embeddings') ]
 
@@ -52,9 +56,17 @@ def match_face_mappings(target_faces : List[Face], face_mappings : List[FaceMapp
 
 
 def select_mapped_faces(target_vision_frame : VisionFrame) -> List[Tuple[Face, FaceMapping]]:
+	return [ (target_face, face_mapping) for target_face, face_mapping in match_target_faces(target_vision_frame) if face_mapping.get('source_paths') ]
+
+
+def select_sticker_faces(target_vision_frame : VisionFrame) -> List[Tuple[Face, FaceMapping]]:
+	return [ (target_face, face_mapping) for target_face, face_mapping in match_target_faces(target_vision_frame) if face_mapping.get('sticker_path') ]
+
+
+def match_target_faces(target_vision_frame : VisionFrame) -> List[Tuple[Face, FaceMapping]]:
+	# every mapping takes part so swapped, stickered and untouched people never steal each other's faces
 	target_faces = get_many_faces([ target_vision_frame ])
-	match_pairs = match_face_mappings(target_faces, get_face_mappings(), state_manager.get_item('reference_face_distance'))
-	return [ (target_face, face_mapping) for target_face, face_mapping in match_pairs if face_mapping.get('source_paths') ]
+	return match_face_mappings(target_faces, get_face_mappings(), state_manager.get_item('reference_face_distance'))
 
 
 def get_face_mapping_source_face(face_mapping : FaceMapping) -> Optional[Face]:

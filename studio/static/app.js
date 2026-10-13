@@ -18,6 +18,7 @@ const el =
 	frameOriginal: $('#frame-original'),
 	frameResult: $('#frame-result'),
 	faceLayer: $('#face-layer'),
+	stickerLayer: $('#sticker-layer'),
 	compareHandle: $('#compare-handle'),
 	frameSpinner: $('#frame-spinner'),
 	timeline: $('#timeline'),
@@ -31,6 +32,8 @@ const el =
 	trimReset: $('#trim-reset'),
 	library: $('#library'),
 	librarySt: $('#library-strip'),
+	libraryKind: $('#library-kind'),
+	libraryHint: $('#library-hint'),
 	addSources: $('#add-sources'),
 	peopleCount: $('#people-count'),
 	peopleSubtitle: $('#people-subtitle'),
@@ -99,6 +102,9 @@ const state =
 	lastHandledTaskId: null,
 	renderedPersonIds: new Set(),
 	importing: false,
+	libraryKind: 'face',
+	adjustPersonId: null,
+	stickerTimers: {},
 	offline: false,
 	reconnectTimer: null,
 	frameErrorTimer: null
@@ -108,7 +114,26 @@ const ICONS =
 {
 	plus: '<svg viewBox="0 0 24 24"><path d="M12 6v12M6 12h12"/></svg>',
 	close: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
-	chevron: '<svg class="person-arrow" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>'
+	chevron: '<svg class="person-arrow" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>',
+	sliders: '<svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>'
+};
+
+const LIBRARY_KINDS =
+{
+	face:
+	{
+		hint: 'Remplacent le visage. Glissez-en un sur une personne, ou touchez-le puis touchez la personne.',
+		empty: 'Déposez ici les photos des nouveaux visages',
+		added: [ 'visage ajouté', 'visages ajoutés' ],
+		rejected: 'Aucun visage trouvé dans : '
+	},
+	sticker:
+	{
+		hint: 'Collées sur la tête et elles la suivent (PNG transparent idéal). Posez-en une sur une personne, puis « Ajuster ».',
+		empty: 'Déposez ici des images à coller sur les têtes : mèmes, emojis, têtes détourées…',
+		added: [ 'image ajoutée', 'images ajoutées' ],
+		rejected: 'Image illisible : '
+	}
 };
 
 const LIBRARY_MIME = 'application/x-facefusion-source';
@@ -326,11 +351,11 @@ function renderMode()
 		button.classList.toggle('is-active', button === activeButton);
 		button.disabled = !target();
 	});
-	thumb.style.width = activeButton.offsetWidth + 'px';
-	thumb.style.transform = 'translateX(' + (activeButton.offsetLeft - 2) + 'px)';
+	placeSegmentThumb(el.modeControl, activeButton);
 
 	el.frameResult.hidden = state.mode === 'original';
 	el.faceLayer.hidden = state.mode !== 'original';
+	renderStickerLayer();
 	el.compareHandle.hidden = state.mode !== 'compare';
 	updateCompare();
 
@@ -356,12 +381,21 @@ function renderMode()
 	}
 }
 
+function placeSegmentThumb(control, activeButton)
+{
+	const thumb = control.querySelector('.segmented-thumb');
+
+	thumb.style.width = activeButton.offsetWidth + 'px';
+	thumb.style.transform = 'translateX(' + (activeButton.offsetLeft - 2) + 'px)';
+}
+
 function setMode(mode)
 {
 	state.mode = mode;
 	renderMode();
 
-	if (mode !== 'original' && state.previewDirty)
+	// a preview computed without stickers (live adjusting) cannot stand in for the baked one, and the other way round
+	if (mode !== 'original' && (state.previewDirty || state.previewLive !== isLiveSticker()))
 	{
 		fetchPreview();
 	}
@@ -481,7 +515,8 @@ async function fetchPreview()
 	el.frameSpinner.hidden = false;
 	try
 	{
-		const response = await withDownloadWatch(() => fetch('/api/preview?frame_number=' + state.frameNumber + '&max_size=1920')).catch(() =>
+		const live = isLiveSticker();
+		const response = await withDownloadWatch(() => fetch('/api/preview?frame_number=' + state.frameNumber + '&max_size=1920' + (live ? '&stickers=0' : ''))).catch(() =>
 		{
 			setOffline(true);
 			throw new Error(OFFLINE_MESSAGE);
@@ -504,6 +539,7 @@ async function fetchPreview()
 		}
 		state.previewUrl = URL.createObjectURL(blob);
 		state.previewDirty = false;
+		state.previewLive = live;
 		el.frameResult.src = state.previewUrl;
 
 		if (response.headers.get('X-Content-Flagged') === '1')
@@ -574,6 +610,71 @@ function renderFaces()
 		fragment.appendChild(node);
 	});
 	el.faceLayer.replaceChildren(fragment);
+	renderStickerLayer();
+}
+
+function isLiveSticker()
+{
+	const person = people().find(item => item.id === state.adjustPersonId);
+	return state.mode === 'result' && Boolean(person && person.source_kind === 'sticker');
+}
+
+function renderStickerLayer()
+{
+	// while adjusting, the engine preview comes without stickers and they are drawn here, live
+	const live = isLiveSticker();
+	const fragment = document.createDocumentFragment();
+
+	el.stickerLayer.hidden = !live;
+
+	if (live)
+	{
+		state.faces.forEach(face =>
+		{
+			const person = people()[personIndex(face.person_id)];
+
+			if (person && person.source_kind === 'sticker' && face.anchor)
+			{
+				fragment.appendChild(createStickerOverlay(person, face.anchor));
+			}
+		});
+	}
+	el.stickerLayer.replaceChildren(fragment);
+}
+
+function createStickerOverlay(person, anchor)
+{
+	// mirrors paste_sticker() in the face_sticker processor, in percent of the frame so resizes keep it in place
+	const frameWidth = target().width;
+	const frameHeight = target().height;
+	const options = person.sticker;
+	const angle = (options.follow_rotation ? anchor.angle : 0) + options.rotation;
+	const radians = angle * Math.PI / 180;
+	const faceSize = anchor.size * frameWidth;
+	const offsetX = options.offset_x * faceSize;
+	const offsetY = options.offset_y * faceSize;
+	const centerX = anchor.x * frameWidth + offsetX * Math.cos(radians) - offsetY * Math.sin(radians);
+	const centerY = anchor.y * frameHeight + offsetX * Math.sin(radians) + offsetY * Math.cos(radians);
+	const [ stickerWidth, stickerHeight ] = person.sticker_size;
+	const stickerScale = faceSize * options.scale / Math.max(stickerWidth, stickerHeight);
+	const width = stickerWidth * stickerScale;
+	const height = stickerHeight * stickerScale;
+	const node = document.createElement('img');
+
+	node.className = 'face-sticker';
+	node.src = person.sticker_image;
+	node.alt = '';
+	node.style.left = ((centerX - width / 2) / frameWidth * 100) + '%';
+	node.style.top = ((centerY - height / 2) / frameHeight * 100) + '%';
+	node.style.width = (width / frameWidth * 100) + '%';
+	node.style.height = (height / frameHeight * 100) + '%';
+	// css 3d mirrors project_sticker_corners(): perspective, then rotateZ, rotateX, rotateY applied right to left
+	const depth = options.depth || 0;
+	const displayScale = el.frame.clientWidth / frameWidth;
+	const perspective = 3 * Math.max(width, height) * displayScale;
+
+	node.style.transform = 'perspective(' + perspective + 'px) rotateZ(' + angle + 'deg) rotateX(' + ((anchor.pitch || 0) * depth) + 'deg) rotateY(' + ((anchor.yaw || 0) * depth) + 'deg)' + (options.mirror ? ' scaleX(-1)' : '');
+	return node;
 }
 
 function onFaceClick(person)
@@ -655,7 +756,7 @@ function renderPeople()
 	}
 	else
 	{
-		el.peopleSubtitle.textContent = count + ' sur ' + list.length + ' à remplacer · les autres restent intacts';
+		el.peopleSubtitle.textContent = count + ' sur ' + list.length + ' à modifier · les autres restent intactes';
 	}
 
 	list.forEach((person, index) =>
@@ -675,11 +776,19 @@ function renderPeople()
 		node.innerHTML =
 			'<button class="person-target" title="' + (isVideo() ? 'Aller à cette image' : 'Personne ' + (index + 1)) + '" style="background-image:url(' + person.thumbnail + ')"><span class="person-number">' + (index + 1) + '</span></button>' +
 			ICONS.chevron +
-			'<button class="slot' + (person.source_id ? ' is-filled' : '') + '" title="' + (person.source_id ? 'Changer le visage source' : 'Choisir un visage source') + '"' + (person.source_thumbnail ? ' style="background-image:url(' + person.source_thumbnail + ')"' : '') + '>' +
+			'<button class="slot' + (person.source_id ? ' is-filled' : '') + (person.source_kind === 'sticker' ? ' is-sticker' : '') + '" title="' + (person.source_id ? 'Changer la source' : 'Choisir une source') + '"' + (person.source_thumbnail ? ' style="background-image:url(' + person.source_thumbnail + ')"' : '') + '>' +
 				(person.source_id ? '<span class="mini-remove" title="Retirer">' + ICONS.close + '</span>' : ICONS.plus) +
 			'</button>' +
-			'<div class="person-meta"><strong>Personne ' + (index + 1) + '</strong><span>' + appearance + ' · ' + (person.source_id ? 'sera remplacée' : 'conservée') + '</span></div>' +
-			'<button class="icon-button person-remove" title="Retirer de la liste">' + ICONS.close + '</button>';
+			'<div class="person-meta"><strong>Personne ' + (index + 1) + '</strong><span>' + appearance + ' · ' + describePerson(person) + '</span></div>' +
+			'<div class="person-actions">' +
+				(person.source_kind === 'sticker' ? '<button class="icon-button person-adjust' + (state.adjustPersonId === person.id ? ' is-active' : '') + '" title="Ajuster l’image">' + ICONS.sliders + '</button>' : '') +
+				'<button class="icon-button person-remove" title="Retirer de la liste">' + ICONS.close + '</button>' +
+			'</div>';
+
+		if (person.source_kind === 'sticker' && state.adjustPersonId === person.id)
+		{
+			node.appendChild(buildAdjustPanel(person));
+		}
 
 		const targetButton = node.querySelector('.person-target');
 		const slot = node.querySelector('.slot');
@@ -714,6 +823,11 @@ function renderPeople()
 			onFiles: files => uploadAndAssign(person.id, files)
 		});
 		node.querySelector('.person-remove').addEventListener('click', () => removePerson(person.id));
+
+		if (node.querySelector('.person-adjust'))
+		{
+			node.querySelector('.person-adjust').addEventListener('click', () => toggleAdjust(person));
+		}
 		node.addEventListener('mouseenter', () => setHoverPerson(person.id));
 		node.addEventListener('mouseleave', () => setHoverPerson(null));
 		fragment.appendChild(node);
@@ -723,6 +837,203 @@ function renderPeople()
 	el.peopleList.replaceChildren(fragment);
 	el.peopleEmpty.hidden = list.length > 0;
 	el.peopleFooter.hidden = list.length === 0;
+}
+
+function describePerson(person)
+{
+	if (person.source_kind === 'sticker')
+	{
+		return 'image collée';
+	}
+	return person.source_id ? 'sera remplacée' : 'conservée';
+}
+
+function toggleAdjust(person)
+{
+	state.adjustPersonId = state.adjustPersonId === person.id ? null : person.id;
+	state.previewDirty = true;
+
+	// show the person where they are best visible while adjusting
+	if (state.adjustPersonId && isVideo())
+	{
+		goToFrame(person.frame_number);
+	}
+	renderPeople();
+
+	if (state.adjustPersonId && state.mode !== 'result')
+	{
+		setMode('result');
+	}
+	else
+	{
+		renderMode();
+		invalidatePreview();
+	}
+}
+
+const STICKER_SLIDERS =
+[
+	{ key: 'scale', label: 'Taille', min: 0.2, max: 5, step: 0.05, format: value => Math.round(value * 100) + ' %' },
+	{ key: 'offset_x', label: 'Horizontal', min: -1, max: 1, step: 0.01, format: value => (value > 0 ? '+' : '') + Math.round(value * 100) },
+	{ key: 'offset_y', label: 'Vertical', min: -1, max: 1, step: 0.01, format: value => (value > 0 ? '+' : '') + Math.round(-value * 100) },
+	{ key: 'rotation', label: 'Rotation', min: -180, max: 180, step: 1, format: value => Math.round(value) + '°' },
+	{ key: 'depth', label: 'Effet 3D', min: 0, max: 1, step: 0.05, format: value => Math.round(value * 100) + ' %' }
+];
+
+const STICKER_TOGGLES =
+[
+	{ key: 'follow_rotation', label: 'Suit l’inclinaison' },
+	{ key: 'mirror', label: 'Miroir' }
+];
+
+const STICKER_SHAPES =
+[
+	{ value: 'full', label: 'Entière', round: false, cutout: false },
+	{ value: 'round', label: 'Ronde', round: true, cutout: false },
+	{ value: 'cutout', label: 'Détourée', round: false, cutout: true }
+];
+
+function stickerShape(sticker)
+{
+	if (sticker.cutout)
+	{
+		return 'cutout';
+	}
+	return sticker.round ? 'round' : 'full';
+}
+
+function buildAdjustPanel(person)
+{
+	const panel = document.createElement('div');
+
+	panel.className = 'adjust';
+	STICKER_SLIDERS.forEach(slider =>
+	{
+		const row = document.createElement('label');
+		const value = person.sticker[slider.key] ?? 0;
+		const shownValue = slider.key === 'offset_y' ? -value : value;
+
+		row.className = 'adjust-row';
+		row.innerHTML = '<span>' + slider.label + '</span><input type="range" min="' + slider.min + '" max="' + slider.max + '" step="' + slider.step + '" value="' + shownValue + '"><output>' + slider.format(value) + '</output>';
+		const input = row.querySelector('input');
+		const output = row.querySelector('output');
+
+		input.addEventListener('input', () =>
+		{
+			// the vertical slider reads "up" as positive, the engine offset points down
+			const nextValue = slider.key === 'offset_y' ? -Number(input.value) : Number(input.value);
+
+			person.sticker[slider.key] = nextValue;
+			output.textContent = slider.format(nextValue);
+			renderStickerLayer();
+			saveSticker(person);
+		});
+		panel.appendChild(row);
+	});
+
+	const shapes = document.createElement('div');
+
+	shapes.className = 'adjust-shapes';
+	shapes.innerHTML = '<span>Forme</span>';
+	STICKER_SHAPES.forEach(shape =>
+	{
+		const chip = document.createElement('button');
+
+		chip.className = 'chip' + (stickerShape(person.sticker) === shape.value ? ' is-set' : '');
+		chip.textContent = shape.label;
+		chip.addEventListener('click', async () =>
+		{
+			shapes.querySelectorAll('.chip').forEach(node => node.classList.toggle('is-set', node === chip));
+			person.sticker.round = shape.round;
+			person.sticker.cutout = shape.cutout;
+
+			if (shape.cutout)
+			{
+				chip.textContent = 'Détourage…';
+			}
+			renderStickerLayer();
+			await saveSticker(person, true);
+			chip.textContent = shape.label;
+		});
+		shapes.appendChild(chip);
+	});
+	panel.appendChild(shapes);
+
+	const toggles = document.createElement('div');
+
+	toggles.className = 'adjust-toggles';
+	STICKER_TOGGLES.forEach(toggle =>
+	{
+		const chip = document.createElement('button');
+
+		chip.className = 'chip' + (person.sticker[toggle.key] ? ' is-set' : '');
+		chip.textContent = toggle.label;
+		chip.addEventListener('click', () =>
+		{
+			person.sticker[toggle.key] = !person.sticker[toggle.key];
+			chip.classList.toggle('is-set', person.sticker[toggle.key]);
+			renderStickerLayer();
+			saveSticker(person, true);
+		});
+		toggles.appendChild(chip);
+	});
+
+	const reset = document.createElement('button');
+
+	reset.className = 'link-button';
+	reset.textContent = 'Réinitialiser';
+	reset.addEventListener('click', async () =>
+	{
+		try
+		{
+			setSession(await request('POST', '/api/people/' + person.id + '/sticker', { reset: true }));
+			invalidatePreview();
+		}
+		catch (error)
+		{
+			handleError(error);
+		}
+	});
+	toggles.appendChild(reset);
+	panel.appendChild(toggles);
+	return panel;
+}
+
+function saveSticker(person, immediate)
+{
+	clearTimeout(state.stickerTimers[person.id]);
+	return new Promise(resolve =>
+	{
+		state.stickerTimers[person.id] = setTimeout(async () =>
+		{
+			try
+			{
+				const session = await withDownloadWatch(() => request('POST', '/api/people/' + person.id + '/sticker', person.sticker));
+
+				// keep the open panel (and the slider being dragged) instead of re-rendering the list
+				state.session = session;
+				renderToolbar();
+				renderFaces();
+
+				// the live overlay already shows the change, the baked preview is refreshed once adjusting ends
+				if (isLiveSticker())
+				{
+					state.previewDirty = true;
+				}
+				else
+				{
+					invalidatePreview();
+				}
+			}
+			catch (error)
+			{
+				handleError(error);
+				// the server refused (for instance the cut-out failed), show its state again
+				setSession(await request('GET', '/api/state').catch(() => state.session));
+			}
+			resolve();
+		}, immediate ? 0 : 250);
+	});
 }
 
 async function assignSource(personId, sourceId)
@@ -748,12 +1059,12 @@ async function uploadAndAssign(personId, files)
 
 	if (!images.length)
 	{
-		toast('Déposez une photo de visage (jpg, png, webp…)', 'error');
+		toast('Déposez une image (jpg, png, webp…)', 'error');
 		return;
 	}
 	try
 	{
-		const session = await upload('/api/library', images.slice(0, 1), 'files');
+		const session = await upload('/api/library?kind=' + state.libraryKind, images.slice(0, 1), 'files');
 
 		reportRejected(session.rejected);
 		setSession(session);
@@ -825,25 +1136,28 @@ async function scanVideo()
 
 function renderLibrary()
 {
-	const items = library();
+	const items = library().filter(item => (item.kind || 'face') === state.libraryKind);
 	const fragment = document.createDocumentFragment();
 
-	if (state.armedId && !items.some(item => item.id === state.armedId))
+	if (state.armedId && !library().some(item => item.id === state.armedId))
 	{
 		setArmed(null);
 	}
+	renderLibraryKind();
+
 	if (!items.length)
 	{
 		const empty = document.createElement('div');
 		empty.className = 'library-empty';
-		empty.textContent = 'Déposez ici les photos des nouveaux visages';
+		empty.textContent = LIBRARY_KINDS[state.libraryKind].empty;
 		fragment.appendChild(empty);
 	}
 	items.forEach(item =>
 	{
 		const node = document.createElement('button');
 
-		node.className = 'library-item' + (item.id === state.armedId ? ' is-armed' : '');
+		node.className = 'library-item' + (item.kind === 'sticker' ? ' is-sticker' : '') + (item.id === state.armedId ? ' is-armed' : '');
+		node.dataset.id = item.id;
 		node.draggable = true;
 		node.title = item.name + ' — glissez sur une personne, ou touchez puis choisissez une personne';
 		node.innerHTML = '<img alt="" src="' + item.thumbnail + '"><span class="item-name">' + escapeHtml(item.name.replace(/\.[^.]+$/, '')) + '</span><span class="mini-remove remove" title="Supprimer">' + ICONS.close + '</span>';
@@ -893,13 +1207,30 @@ function setArmed(sourceId)
 {
 	state.armedId = sourceId;
 	document.body.classList.toggle('is-armed', Boolean(sourceId));
-	el.librarySt.querySelectorAll('.library-item').forEach((node, index) => node.classList.toggle('is-armed', library()[index] && library()[index].id === sourceId));
+	el.librarySt.querySelectorAll('.library-item').forEach(node => node.classList.toggle('is-armed', node.dataset.id === sourceId));
 	renderMode();
+}
+
+function renderLibraryKind()
+{
+	const buttons = Array.from(el.libraryKind.querySelectorAll('button'));
+	const activeButton = buttons.find(button => button.dataset.kind === state.libraryKind);
+
+	buttons.forEach(button => button.classList.toggle('is-active', button === activeButton));
+	placeSegmentThumb(el.libraryKind, activeButton);
+	el.libraryHint.textContent = LIBRARY_KINDS[state.libraryKind].hint;
+}
+
+function setLibraryKind(kind)
+{
+	state.libraryKind = kind;
+	renderLibrary();
 }
 
 async function addSources(files)
 {
 	const images = Array.from(files).filter(file => file.type.startsWith('image/'));
+	const kind = state.libraryKind;
 
 	if (!images.length)
 	{
@@ -907,15 +1238,15 @@ async function addSources(files)
 	}
 	try
 	{
-		toast('Analyse de ' + plural(images.length, 'photo', 'photos') + '…', 'info', 1800);
-		const session = await upload('/api/library', images, 'files');
+		toast('Analyse de ' + plural(images.length, 'image', 'images') + '…', 'info', 1800);
+		const session = await upload('/api/library?kind=' + kind, images, 'files');
 
-		reportRejected(session.rejected);
+		reportRejected(session.rejected, kind);
 		setSession(session);
 
 		if (session.added.length)
 		{
-			toast(plural(session.added.length, 'visage ajouté', 'visages ajoutés') + ' à la bibliothèque');
+			toast(plural(session.added.length, LIBRARY_KINDS[kind].added[0], LIBRARY_KINDS[kind].added[1]) + ' à la bibliothèque');
 		}
 	}
 	catch (error)
@@ -924,11 +1255,11 @@ async function addSources(files)
 	}
 }
 
-function reportRejected(rejected)
+function reportRejected(rejected, kind = state.libraryKind)
 {
 	if (rejected && rejected.length)
 	{
-		toast('Aucun visage trouvé dans : ' + rejected.join(', '), 'error', 5200);
+		toast(LIBRARY_KINDS[kind].rejected + rejected.join(', '), 'error', 5200);
 	}
 }
 
@@ -1656,6 +1987,7 @@ function installEvents()
 	});
 
 	el.modeControl.querySelectorAll('button').forEach(button => button.addEventListener('click', () => setMode(button.dataset.mode)));
+	el.libraryKind.querySelectorAll('button').forEach(button => button.addEventListener('click', () => setLibraryKind(button.dataset.kind)));
 	el.scrubber.addEventListener('input', () =>
 	{
 		state.frameNumber = Number(el.scrubber.value);
@@ -1672,14 +2004,14 @@ function installEvents()
 	el.scanCancel.addEventListener('click', cancelTask);
 	el.assignOrder.addEventListener('click', async () =>
 	{
-		if (!library().length)
+		if (!library().some(item => (item.kind || 'face') === state.libraryKind))
 		{
-			toast('Ajoutez d’abord des visages sources', 'info');
+			toast(state.libraryKind === 'sticker' ? 'Ajoutez d’abord des images' : 'Ajoutez d’abord des visages sources', 'info');
 			return;
 		}
 		try
 		{
-			setSession(await request('POST', '/api/people/assign-in-order'));
+			setSession(await request('POST', '/api/people/assign-in-order?kind=' + state.libraryKind));
 			invalidatePreview();
 		}
 		catch (error)
@@ -1735,7 +2067,12 @@ function installEvents()
 	el.frameOriginal.addEventListener('error', onFrameError);
 	el.offlineRetry.addEventListener('click', tryReconnect);
 	new ResizeObserver(() => layoutFrame()).observe(el.canvas);
-	window.addEventListener('resize', renderMode);
+	window.addEventListener('resize', () =>
+	{
+		renderMode();
+		renderLibraryKind();
+		renderStickerLayer();
+	});
 	installCompareHandle();
 	installStripScroll();
 	installGlobalDrop();

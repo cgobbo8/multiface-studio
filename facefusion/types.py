@@ -45,10 +45,23 @@ Face = namedtuple('Face',
 	'race'
 ])
 FaceSet : TypeAlias = Dict[str, List[Face]]
+FaceStickerOptions = TypedDict('FaceStickerOptions',
+{
+	'scale' : float,
+	'offset_x' : float,
+	'offset_y' : float,
+	'rotation' : float,
+	'follow_rotation' : bool,
+	'depth' : float,
+	'mirror' : bool,
+	'round' : bool
+})
 FaceMapping = TypedDict('FaceMapping',
 {
 	'reference_embeddings' : List[Embedding],
-	'source_paths' : List[str]
+	'source_paths' : List[str],
+	'sticker_path' : Optional[str],
+	'sticker_options' : Optional[FaceStickerOptions]
 })
 FaceStore = TypedDict('FaceStore',
 {
