@@ -36,11 +36,16 @@ const I18N =
 		'timeline.forward': 'Image suivante (→)',
 		'timeline.position': 'Position dans la vidéo',
 		'timeline.timecode': '{time}  ·  image {frame} / {total}',
-		'trim.start': '⟦ Début ici',
-		'trim.start_title': 'Commencer le rendu ici',
-		'trim.end': 'Fin ici ⟧',
-		'trim.end_title': 'Arrêter le rendu ici',
+		'trim.start': 'Début ici',
+		'trim.start_title': 'Commencer l’extrait sur l’image affichée (I)',
+		'trim.end': 'Fin ici',
+		'trim.end_title': 'Terminer l’extrait sur l’image affichée (O)',
 		'trim.reset': 'Réinitialiser',
+		'trim.reset_title': 'Revenir à la vidéo entière',
+		'trim.handle_start': 'Début de l’extrait : faites glisser pour couper',
+		'trim.handle_end': 'Fin de l’extrait : faites glisser pour couper',
+		'trim.summary': 'Extrait {start} → {end} · {duration}',
+		'trim.full': 'Vidéo entière · {duration}',
 
 		'library.title': 'Sources',
 		'library.faces': 'Visages',
@@ -228,6 +233,7 @@ const I18N =
 		'error.render_failed': 'Le rendu a échoué, consultez le terminal pour les détails.',
 		'error.unexpected': 'Erreur inattendue : {detail}',
 
+		'unit.seconds': '{value} s',
 		'unit.megabytes': '{value} Mo',
 		'unit.gigabytes': '{value} Go'
 	},
@@ -265,11 +271,16 @@ const I18N =
 		'timeline.forward': 'Next frame (→)',
 		'timeline.position': 'Position in the video',
 		'timeline.timecode': '{time}  ·  frame {frame} / {total}',
-		'trim.start': '⟦ Start here',
-		'trim.start_title': 'Start rendering here',
-		'trim.end': 'End here ⟧',
-		'trim.end_title': 'Stop rendering here',
+		'trim.start': 'Start here',
+		'trim.start_title': 'Start the clip at the current frame (I)',
+		'trim.end': 'End here',
+		'trim.end_title': 'End the clip at the current frame (O)',
 		'trim.reset': 'Reset',
+		'trim.reset_title': 'Back to the whole video',
+		'trim.handle_start': 'Clip start: drag to trim',
+		'trim.handle_end': 'Clip end: drag to trim',
+		'trim.summary': 'Clip {start} → {end} · {duration}',
+		'trim.full': 'Whole video · {duration}',
 
 		'library.title': 'Sources',
 		'library.faces': 'Faces',
@@ -457,6 +468,7 @@ const I18N =
 		'error.render_failed': 'The render failed, check the terminal for details.',
 		'error.unexpected': 'Unexpected error: {detail}',
 
+		'unit.seconds': '{value} s',
 		'unit.megabytes': '{value} MB',
 		'unit.gigabytes': '{value} GB'
 	}

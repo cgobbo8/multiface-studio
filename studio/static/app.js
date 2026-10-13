@@ -25,8 +25,9 @@ const el =
 	canvasDrop: $('#canvas-drop'),
 	canvasDropText: $('#canvas-drop-text'),
 	timeline: $('#timeline'),
-	scrubber: $('#scrubber'),
-	scrubberTrim: $('#scrubber-trim'),
+	trimmer: $('#trimmer'),
+	filmstrip: $('#filmstrip'),
+	trimSummary: $('#trim-summary'),
 	stepBack: $('#step-back'),
 	stepForward: $('#step-forward'),
 	timecode: $('#timecode'),
@@ -115,7 +116,9 @@ const state =
 	stickerTimers: {},
 	offline: false,
 	reconnectTimer: null,
-	frameErrorTimer: null
+	frameErrorTimer: null,
+	trimDraft: null,
+	filmstripKey: null
 };
 
 const ICONS =
@@ -265,13 +268,29 @@ function escapeHtml(value)
 	return String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' })[character]);
 }
 
-function formatTimecode(frameNumber)
+function formatClock(frameNumber)
 {
 	const fps = (target() && target().fps) || 25;
 	const seconds = frameNumber / fps;
 	const minutes = Math.floor(seconds / 60);
 	const rest = seconds - minutes * 60;
-	return t('timeline.timecode', { time: String(minutes).padStart(2, '0') + ':' + rest.toFixed(2).padStart(5, '0'), frame: frameNumber + 1, total: target().frame_total });
+	return String(minutes).padStart(2, '0') + ':' + rest.toFixed(2).padStart(5, '0');
+}
+
+function formatTimecode(frameNumber)
+{
+	return t('timeline.timecode', { time: formatClock(frameNumber), frame: frameNumber + 1, total: target().frame_total });
+}
+
+function formatDuration(frameCount)
+{
+	const seconds = frameCount / ((target() && target().fps) || 25);
+
+	if (seconds >= 60)
+	{
+		return Math.floor(seconds / 60) + ':' + String(Math.floor(seconds % 60)).padStart(2, '0');
+	}
+	return t('unit.seconds', { value: formatDecimal(seconds, 1) });
 }
 
 function shortcutLabel(key)
@@ -351,9 +370,6 @@ function renderViewerChrome()
 
 	if (isVideo())
 	{
-		el.scrubber.max = Math.max(0, target().frame_total - 1);
-		el.scrubber.value = state.frameNumber;
-		el.timecode.textContent = formatTimecode(state.frameNumber);
 		renderTrim();
 	}
 	renderMode();
@@ -475,8 +491,7 @@ function showFrame()
 
 	if (isVideo())
 	{
-		el.scrubber.value = state.frameNumber;
-		el.timecode.textContent = formatTimecode(state.frameNumber);
+		renderPlayhead();
 	}
 	clearTimeout(state.frameTimer);
 	state.frameTimer = setTimeout(() =>
@@ -727,32 +742,202 @@ function setHoverPerson(personId)
 	el.peopleList.querySelectorAll('.person').forEach(node => node.classList.toggle('is-hover', personId !== null && Number(node.dataset.personId) === personId));
 }
 
+// the clip as [first frame, end frame excluded], a handle being dragged wins over the saved one
+function resolveTrim()
+{
+	const [ trimStart, trimEnd ] = state.trimDraft || state.session.trim;
+
+	return [ trimStart ?? 0, trimEnd ?? target().frame_total ];
+}
+
 function renderTrim()
 {
-	const [ trimStart, trimEnd ] = state.session.trim;
-	const total = Math.max(1, target().frame_total - 1);
-	const startPercent = ((trimStart || 0) / total) * 100;
-	const endPercent = ((trimEnd ? trimEnd - 1 : total) / total) * 100;
-	const hasTrim = trimStart !== null || trimEnd !== null;
+	const total = target().frame_total;
+	const [ trimStart, trimEnd ] = resolveTrim();
+	const trimmed = trimStart > 0 || trimEnd < total;
 
-	el.scrubberTrim.style.background = hasTrim
-		? 'linear-gradient(to right, var(--fill) ' + startPercent + '%, var(--accent) ' + startPercent + '%, var(--accent) ' + endPercent + '%, var(--fill) ' + endPercent + '%)'
-		: '';
-	el.trimStart.classList.toggle('is-set', trimStart !== null);
-	el.trimEnd.classList.toggle('is-set', trimEnd !== null);
-	el.trimReset.hidden = !hasTrim;
+	el.trimmer.style.setProperty('--start', trimStart / total);
+	el.trimmer.style.setProperty('--end', trimEnd / total);
+	el.trimmer.classList.toggle('is-trimmed', trimmed);
+	el.trimmer.classList.toggle('is-locked', isBusy());
+	el.trimSummary.classList.toggle('is-trimmed', trimmed);
+	el.trimSummary.textContent = trimmed
+		? t('trim.summary', { start: formatClock(trimStart), end: formatClock(trimEnd), duration: formatDuration(trimEnd - trimStart) })
+		: t('trim.full', { duration: formatDuration(total) });
+	el.trimStart.classList.toggle('is-set', trimStart > 0);
+	el.trimEnd.classList.toggle('is-set', trimEnd < total);
+	[ el.trimStart, el.trimEnd, el.trimReset ].forEach(button => { button.disabled = isBusy(); });
+	el.trimReset.hidden = !trimmed;
+	renderPlayhead();
+	renderFilmstrip();
+}
+
+function renderPlayhead()
+{
+	const total = target().frame_total;
+
+	el.trimmer.style.setProperty('--play', (state.frameNumber + 0.5) / total);
+	el.trimmer.setAttribute('aria-valuemax', total - 1);
+	el.trimmer.setAttribute('aria-valuenow', state.frameNumber);
+	el.trimmer.setAttribute('aria-valuetext', formatClock(state.frameNumber));
+	el.timecode.textContent = formatTimecode(state.frameNumber);
+}
+
+function renderFilmstrip()
+{
+	const width = el.filmstrip.clientWidth;
+	const height = el.filmstrip.clientHeight;
+
+	if (!isVideo() || !width || !height)
+	{
+		return;
+	}
+	const total = target().frame_total;
+	const targetId = target().id;
+	const count = Math.max(1, Math.min(24, Math.ceil(width / Math.max(24, height * target().width / target().height))));
+	const key = targetId + ':' + count;
+	const thumbs = [];
+
+	if (state.filmstripKey === key)
+	{
+		return;
+	}
+	state.filmstripKey = key;
+
+	for (let index = 0; index < count; index++)
+	{
+		thumbs.push(document.createElement('span'));
+	}
+	el.filmstrip.replaceChildren(...thumbs);
+	// the thumbnails wait a moment so the frame being viewed is fetched first
+	setTimeout(() => thumbs.forEach((thumb, index) =>
+	{
+		const frameNumber = Math.min(total - 1, Math.floor((index + 0.5) * total / count));
+
+		thumb.style.backgroundImage = 'url(/api/frame?frame_number=' + frameNumber + '&max_size=240&v=' + targetId + ')';
+	}), 300);
+}
+
+function setTrimEdge(edge)
+{
+	const [ trimStart, trimEnd ] = resolveTrim();
+	const frameNumber = state.frameNumber;
+
+	// an edge set past the other one releases it, so the clip always stays valid
+	if (edge === 'start')
+	{
+		updateTrim(frameNumber, trimEnd > frameNumber ? trimEnd : null);
+	}
+	else
+	{
+		updateTrim(trimStart <= frameNumber ? trimStart : null, frameNumber + 1);
+	}
 }
 
 async function updateTrim(start, end)
 {
 	try
 	{
-		setSession(await request('POST', '/api/trim', { start, end }));
+		const session = await request('POST', '/api/trim', { start, end });
+
+		state.trimDraft = null;
+		setSession(session);
 	}
 	catch (error)
 	{
+		state.trimDraft = null;
+		renderTrim();
 		handleError(error);
 	}
+}
+
+function installTrimmer()
+{
+	let dragEdge = null;
+	let grabOffset = 0;
+
+	const edgeX = edge =>
+	{
+		const rect = el.filmstrip.getBoundingClientRect();
+		const [ trimStart, trimEnd ] = resolveTrim();
+
+		return rect.left + (edge === 'start' ? trimStart : trimEnd) / target().frame_total * rect.width;
+	};
+	const frameAt = (clientX, boundary) =>
+	{
+		const rect = el.filmstrip.getBoundingClientRect();
+		const fraction = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+		const total = target().frame_total;
+
+		return boundary ? Math.round(fraction * total) : Math.min(total - 1, Math.floor(fraction * total));
+	};
+	const move = event =>
+	{
+		const previousFrame = state.frameNumber;
+
+		if (dragEdge === 'playhead')
+		{
+			state.frameNumber = frameAt(event.clientX, false);
+		}
+		else
+		{
+			const [ trimStart, trimEnd ] = resolveTrim();
+			const boundary = frameAt(event.clientX - grabOffset, true);
+
+			state.trimDraft = dragEdge === 'start' ? [ Math.min(boundary, trimEnd - 1), trimEnd ] : [ trimStart, Math.max(boundary, trimStart + 1) ];
+			// the viewer shows the frame under the dragged edge, as when trimming in Photos
+			state.frameNumber = dragEdge === 'start' ? state.trimDraft[0] : state.trimDraft[1] - 1;
+			renderTrim();
+		}
+		if (state.frameNumber !== previousFrame)
+		{
+			showFrame();
+		}
+	};
+	const release = () =>
+	{
+		const draft = state.trimDraft;
+		const [ savedStart, savedEnd ] = state.session.trim;
+		const total = target().frame_total;
+
+		if (!dragEdge)
+		{
+			return;
+		}
+		dragEdge = null;
+		el.trimmer.classList.remove('is-dragging');
+
+		if (draft && (draft[0] !== (savedStart ?? 0) || draft[1] !== (savedEnd ?? total)))
+		{
+			updateTrim(draft[0], draft[1]);
+		}
+		else if (draft)
+		{
+			state.trimDraft = null;
+			renderTrim();
+		}
+	};
+
+	el.trimmer.addEventListener('pointerdown', event =>
+	{
+		const handle = event.target.closest('.trim-handle');
+
+		if (!isVideo() || event.button !== 0)
+		{
+			return;
+		}
+		dragEdge = handle && !isBusy() ? handle.dataset.edge : 'playhead';
+		// grabbing a handle off its exact edge must not make the clip jump
+		grabOffset = dragEdge === 'playhead' ? 0 : event.clientX - edgeX(dragEdge);
+		el.trimmer.setPointerCapture(event.pointerId);
+		el.trimmer.classList.add('is-dragging');
+		event.preventDefault();
+		move(event);
+	});
+	el.trimmer.addEventListener('pointermove', event => dragEdge && move(event));
+	el.trimmer.addEventListener('pointerup', release);
+	el.trimmer.addEventListener('pointercancel', release);
+	new ResizeObserver(() => isVideo() && renderFilmstrip()).observe(el.trimmer);
 }
 
 /* ------------------------------------------------------------ people */
@@ -2090,15 +2275,10 @@ function installEvents()
 
 	el.modeControl.querySelectorAll('button').forEach(button => button.addEventListener('click', () => setMode(button.dataset.mode)));
 	el.libraryKind.querySelectorAll('button').forEach(button => button.addEventListener('click', () => setLibraryKind(button.dataset.kind)));
-	el.scrubber.addEventListener('input', () =>
-	{
-		state.frameNumber = Number(el.scrubber.value);
-		showFrame();
-	});
 	el.stepBack.addEventListener('click', () => goToFrame(state.frameNumber - 1));
 	el.stepForward.addEventListener('click', () => goToFrame(state.frameNumber + 1));
-	el.trimStart.addEventListener('click', () => updateTrim(state.frameNumber, state.session.trim[1] !== null && state.session.trim[1] <= state.frameNumber ? null : state.session.trim[1]));
-	el.trimEnd.addEventListener('click', () => updateTrim(state.session.trim[0] !== null && state.session.trim[0] > state.frameNumber ? null : state.session.trim[0], state.frameNumber + 1));
+	el.trimStart.addEventListener('click', () => setTrimEdge('start'));
+	el.trimEnd.addEventListener('click', () => setTrimEdge('end'));
 	el.trimReset.addEventListener('click', () => updateTrim(null, null));
 
 	el.scanFrame.addEventListener('click', scanFrame);
@@ -2162,7 +2342,7 @@ function installEvents()
 				el.targetInput.click();
 			}
 		}
-		if (!typing && isVideo() && document.activeElement !== el.scrubber)
+		if (!typing && isVideo())
 		{
 			if (event.key === 'ArrowLeft')
 			{
@@ -2171,6 +2351,23 @@ function installEvents()
 			if (event.key === 'ArrowRight')
 			{
 				goToFrame(state.frameNumber + (event.shiftKey ? 10 : 1));
+			}
+		}
+		// I and O set the clip edges at the current frame, Home and End jump to them, like in video editors
+		if (!typing && isVideo() && !event.metaKey && !event.ctrlKey && !event.altKey)
+		{
+			if (event.key === 'Home' || event.key === 'End')
+			{
+				event.preventDefault();
+				goToFrame(event.key === 'Home' ? resolveTrim()[0] : resolveTrim()[1] - 1);
+			}
+			if ((event.key === 'i' || event.key === 'I') && !isBusy())
+			{
+				setTrimEdge('start');
+			}
+			if ((event.key === 'o' || event.key === 'O') && !isBusy())
+			{
+				setTrimEdge('end');
 			}
 		}
 	});
@@ -2185,6 +2382,7 @@ function installEvents()
 		renderStickerLayer();
 	});
 	installCompareHandle();
+	installTrimmer();
 	installStripScroll();
 	installGlobalDrop();
 }

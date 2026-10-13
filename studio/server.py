@@ -1220,7 +1220,13 @@ def update_settings(payload : Dict[str, Any]) -> Dict[str, Any]:
 @app.post('/api/trim')
 def update_trim(payload : TrimPayload) -> Dict[str, Any]:
 	ensure_idle()
-	SESSION['trim'] = [ payload.start, payload.end ]
+	target = SESSION.get('target')
+	frame_total = (target and target.get('frame_total')) or 1
+	trim_start = max(0, min(payload.start or 0, frame_total - 1))
+	trim_end = max(trim_start + 1, min(payload.end or frame_total, frame_total))
+
+	# the edges of the video mean "no trim", so dragging a handle back to them clears it
+	SESSION['trim'] = [ trim_start or None, trim_end if trim_end < frame_total else None ]
 	return serialize_session()
 
 

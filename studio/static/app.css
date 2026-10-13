@@ -14,6 +14,7 @@
 	--green: #34c759;
 	--red: #ff3b30;
 	--orange: #ff9500;
+	--yellow: #ffcc00;
 
 	--glass: rgba(255, 255, 255, 0.55);
 	--glass-strong: rgba(255, 255, 255, 0.78);
@@ -50,6 +51,7 @@
 		--green: #30d158;
 		--red: #ff453a;
 		--orange: #ff9f0a;
+		--yellow: #ffd60a;
 
 		--glass: rgba(28, 28, 34, 0.5);
 		--glass-strong: rgba(36, 36, 44, 0.78);
@@ -79,6 +81,7 @@
 	--green: #30d158;
 	--red: #ff453a;
 	--orange: #ff9f0a;
+	--yellow: #ffd60a;
 	--glass: rgba(28, 28, 34, 0.5);
 	--glass-strong: rgba(36, 36, 44, 0.78);
 	--glass-border: rgba(255, 255, 255, 0.09);
@@ -381,6 +384,9 @@ p {
 }
 
 .chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
 	height: 26px;
 	padding: 0 10px;
 	border: 0;
@@ -389,6 +395,16 @@ p {
 	font-size: 12px;
 	font-weight: 500;
 	transition: background 0.2s;
+}
+
+.chip .icon {
+	width: 14px;
+	height: 14px;
+}
+
+.chip:disabled {
+	opacity: 0.45;
+	pointer-events: none;
 }
 
 .chip:hover {
@@ -748,10 +764,14 @@ p {
 .timeline-meta {
 	justify-content: space-between;
 	padding: 0 40px;
+	gap: 12px;
 }
 
 .timeline-actions {
 	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	justify-content: flex-end;
 	gap: 6px;
 }
 
@@ -761,22 +781,160 @@ p {
 	font-variant-numeric: tabular-nums;
 }
 
-.scrubber {
+/* the trimmer: filmstrip, clip handles and playhead, positioned from --start, --end and --play (0 to 1) */
+.trimmer {
+	--handle: 14px;
+	--start: 0;
+	--end: 1;
+	--play: 0;
+	--trim-color: color-mix(in srgb, var(--text) 28%, transparent);
+	--trim-ink: color-mix(in srgb, var(--bg) 85%, transparent);
 	position: relative;
 	flex: 1;
-	height: 28px;
-	display: flex;
-	align-items: center;
+	min-width: 0;
+	height: 54px;
+	border-radius: 10px;
+	cursor: pointer;
+	touch-action: none;
+	user-select: none;
+	outline: none;
 }
 
-.scrubber-trim {
+.trimmer:focus-visible {
+	box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.trimmer.is-trimmed {
+	--trim-color: var(--yellow);
+	--trim-ink: rgba(0, 0, 0, 0.62);
+}
+
+.trimmer.is-dragging {
+	cursor: ew-resize;
+}
+
+.filmstrip {
 	position: absolute;
-	left: 0;
-	right: 0;
-	height: 6px;
-	border-radius: 999px;
-	pointer-events: none;
+	top: 4px;
+	bottom: 4px;
+	left: var(--handle);
+	right: var(--handle);
+	display: flex;
+	border-radius: 4px;
+	overflow: hidden;
 	background: var(--fill-strong);
+}
+
+.filmstrip span {
+	flex: 1 1 0;
+	min-width: 0;
+	background: center / cover no-repeat;
+}
+
+.filmstrip span + span {
+	box-shadow: inset 1px 0 rgba(0, 0, 0, 0.25);
+}
+
+.trim-shade {
+	position: absolute;
+	top: 4px;
+	bottom: 4px;
+	background: rgba(0, 0, 0, 0.6);
+	pointer-events: none;
+}
+
+.trim-shade-start {
+	left: var(--handle);
+	width: calc(var(--start) * (100% - 2 * var(--handle)));
+}
+
+.trim-shade-end {
+	right: var(--handle);
+	width: calc((1 - var(--end)) * (100% - 2 * var(--handle)));
+}
+
+.trim-frame {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: calc(var(--start) * (100% - 2 * var(--handle)));
+	right: calc((1 - var(--end)) * (100% - 2 * var(--handle)));
+	border-top: 4px solid var(--trim-color);
+	border-bottom: 4px solid var(--trim-color);
+	border-radius: 8px;
+	pointer-events: none;
+	transition: border-color 0.2s;
+}
+
+.trim-handle {
+	position: absolute;
+	top: -4px;
+	bottom: -4px;
+	display: grid;
+	place-items: center;
+	width: var(--handle);
+	padding: 0;
+	border: 0;
+	background: var(--trim-color);
+	color: var(--trim-ink);
+	cursor: ew-resize;
+	pointer-events: auto;
+	transition: background 0.2s, color 0.2s;
+}
+
+.trim-handle-start {
+	left: 0;
+	border-radius: 8px 0 0 8px;
+}
+
+.trim-handle-end {
+	right: 0;
+	border-radius: 0 8px 8px 0;
+}
+
+.trim-handle svg {
+	width: 8px;
+	height: 16px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 2.2;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.trimmer:not(.is-trimmed) .trim-handle:hover {
+	--trim-color: var(--yellow);
+	--trim-ink: rgba(0, 0, 0, 0.62);
+}
+
+.trimmer.is-locked .trim-handle {
+	pointer-events: none;
+	opacity: 0.5;
+}
+
+.playhead {
+	position: absolute;
+	top: -2px;
+	bottom: -2px;
+	left: calc(var(--handle) + var(--play) * (100% - 2 * var(--handle)));
+	width: 4px;
+	margin-left: -2px;
+	border-radius: 999px;
+	background: #fff;
+	box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.3), 0 2px 6px rgba(0, 0, 0, 0.35);
+	pointer-events: none;
+}
+
+.trim-summary {
+	margin-right: 4px;
+	font-size: 12px;
+	color: var(--text-secondary);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.trim-summary.is-trimmed {
+	color: var(--text);
 }
 
 input[type="range"] {

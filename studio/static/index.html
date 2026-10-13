@@ -86,18 +86,31 @@
 				<div class="timeline" id="timeline" hidden>
 					<div class="timeline-row">
 						<button class="icon-button" id="step-back" data-i18n-title="timeline.back" title="Image précédente (←)"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
-						<div class="scrubber">
-							<div class="scrubber-trim" id="scrubber-trim"></div>
-							<input type="range" id="scrubber" min="0" max="0" value="0" step="1" aria-label="Position dans la vidéo" data-i18n-aria="timeline.position">
+						<div class="trimmer" id="trimmer" role="slider" tabindex="0" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-label="Position dans la vidéo" data-i18n-aria="timeline.position">
+							<div class="filmstrip" id="filmstrip"></div>
+							<div class="trim-shade trim-shade-start"></div>
+							<div class="trim-shade trim-shade-end"></div>
+							<div class="trim-frame">
+								<button class="trim-handle trim-handle-start" data-edge="start" tabindex="-1" data-i18n-title="trim.handle_start" title="Début de l’extrait : faites glisser pour couper"><svg viewBox="0 0 8 16"><path d="M5.5 3 2.5 8l3 5"/></svg></button>
+								<button class="trim-handle trim-handle-end" data-edge="end" tabindex="-1" data-i18n-title="trim.handle_end" title="Fin de l’extrait : faites glisser pour couper"><svg viewBox="0 0 8 16"><path d="M2.5 3l3 5-3 5"/></svg></button>
+							</div>
+							<div class="playhead"></div>
 						</div>
 						<button class="icon-button" id="step-forward" data-i18n-title="timeline.forward" title="Image suivante (→)"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
 					</div>
 					<div class="timeline-row timeline-meta">
 						<span class="timecode" id="timecode">00:00.00</span>
 						<div class="timeline-actions">
-							<button class="chip" id="trim-start" data-i18n="trim.start" data-i18n-title="trim.start_title" title="Commencer le rendu ici">⟦ Début ici</button>
-							<button class="chip" id="trim-end" data-i18n="trim.end" data-i18n-title="trim.end_title" title="Arrêter le rendu ici">Fin ici ⟧</button>
-							<button class="chip chip-quiet" id="trim-reset" data-i18n="trim.reset" hidden>Réinitialiser</button>
+							<span class="trim-summary" id="trim-summary"></span>
+							<button class="chip" id="trim-start" data-i18n-title="trim.start_title" title="Commencer l’extrait sur l’image affichée (I)">
+								<svg class="icon" viewBox="0 0 24 24"><path d="M8 5H5v14h3M11 12h8M16 9l3 3-3 3"/></svg>
+								<span data-i18n="trim.start">Début ici</span>
+							</button>
+							<button class="chip" id="trim-end" data-i18n-title="trim.end_title" title="Terminer l’extrait sur l’image affichée (O)">
+								<span data-i18n="trim.end">Fin ici</span>
+								<svg class="icon" viewBox="0 0 24 24"><path d="M16 5h3v14h-3M5 12h8M10 9l3 3-3 3"/></svg>
+							</button>
+							<button class="chip chip-quiet" id="trim-reset" data-i18n="trim.reset" data-i18n-title="trim.reset_title" title="Revenir à la vidéo entière" hidden>Réinitialiser</button>
 						</div>
 					</div>
 				</div>

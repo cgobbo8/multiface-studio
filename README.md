@@ -18,7 +18,8 @@ Le moteur est [FaceFusion 3.5.4](https://github.com/facefusion/facefusion), avec
 - **Attribution un-pour-un** : deux personnes qui se ressemblent ne reçoivent jamais la même source sur une même image.
 - **Rémanence en vidéo** : quand la détection rate un visage quelques images (flou, main devant), le remplacement ou l’image collée continue (jusqu’à 0,25 s), seulement si la tête est restée quasiment au même endroit. Un visage détecté mais pas reconnu (profil) est rattaché à la bonne personne. Rien n’est jamais comblé à travers un changement de plan ni sur une autre personne.
 - **Aperçu et comparaison avant/après** sur n’importe quelle image de la vidéo.
-- **Extrait vidéo** (début/fin), progression du rendu, annulation.
+- **Extrait vidéo** : sous la vidéo, une bande d’images avec deux poignées à faire glisser (comme dans Photos) ; les touches **I** et **O** placent le début et la fin sur l’image affichée. Seul l’extrait est analysé et généré.
+- Progression du rendu, annulation.
 - **Téléchargement des modèles visible** : nom, pourcentage et Mo reçus.
 - Réglages : modèle de remplacement, résolution, force du visage source, amélioration (GFPGAN, CodeFormer…), respect des occlusions, tolérance de reconnaissance, détecteur, qualité d’export, accélération matérielle.
 
@@ -46,6 +47,7 @@ Sinon, les modèles de base (~1 Go) sont téléchargés au premier démarrage, a
 4. Vérifiez avec **Aperçu** ou **Comparer**.
 5. **Générer**. Le résultat est enregistré dans `app/workspace/outputs/`.
 
+Pour ne garder qu’un passage d’une vidéo, faites glisser les poignées de la bande d’images sous la vidéo, ou placez-vous sur une image et appuyez sur **I** (début) ou **O** (fin).
 Une personne a été manquée dans une vidéo ? Placez-vous sur une image où elle apparaît et touchez **Cette image**.
 Sur une grande photo de groupe avec de petits visages, baissez le **Seuil de détection** ou choisissez le détecteur **Tous**.
 
@@ -63,7 +65,7 @@ Le studio est piloté par une API HTTP locale (le port est affiché au démarrag
 | `POST` | `/api/people/{id}/sticker` | Règle l’image collée : `scale`, `offset_x`, `offset_y` (en tailles de visage), `rotation` (°), `follow_rotation`, `depth` (effet 3D, 0–1), `mirror`, `round`, `cutout` (détourage), ou `{ "reset": true }` |
 | `POST` | `/api/people/assign-in-order?kind=face` | Répartit les sources (`face` ou `sticker`) dans l’ordre |
 | `POST` | `/api/settings` | Modifie les réglages (voir `settings` dans `/api/state`) |
-| `POST` | `/api/trim` | `{ "start": 0, "end": 300 }` extrait vidéo, en numéros d’image |
+| `POST` | `/api/trim` | `{ "start": 0, "end": 300 }` extrait vidéo, en numéros d’image (fin exclue, `null` = bord de la vidéo) |
 | `GET` | `/api/preview?frame_number=0` | Aperçu JPEG d’une image |
 | `POST` | `/api/render` | Lance le rendu (tâche) |
 | `GET` | `/api/task` | Tâche en cours : `status`, `progress`, `stage`, `download`, `result` |
