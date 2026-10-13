@@ -174,6 +174,7 @@ def init_engine() -> None:
 		'reference_face_distance': state_manager.get_item('reference_face_distance'),
 		'face_detector_model': state_manager.get_item('face_detector_model'),
 		'face_detector_score': state_manager.get_item('face_detector_score'),
+		'rotated_faces': True,
 		'output_image_quality': 92,
 		'output_video_quality': 85,
 		'execution_provider': (state_manager.get_item('execution_providers') or [ 'cpu' ])[0]
@@ -221,6 +222,8 @@ def apply_settings() -> None:
 	state_manager.set_item('face_detector_model', face_detector_model)
 	state_manager.set_item('face_detector_size', facefusion.choices.face_detector_set.get(face_detector_model)[-1])
 	state_manager.set_item('face_detector_score', SETTINGS.get('face_detector_score'))
+	# the detector only knows upright faces, turned copies of the frame catch people lying down or upside down
+	state_manager.set_item('face_detector_angles', [ 0, 90, 270 ] if SETTINGS.get('rotated_faces') else [ 0 ])
 	state_manager.set_item('output_image_quality', SETTINGS.get('output_image_quality'))
 	state_manager.set_item('output_video_quality', SETTINGS.get('output_video_quality'))
 	state_manager.set_item('execution_providers', [ SETTINGS.get('execution_provider') ])
@@ -1192,6 +1195,7 @@ def update_settings(payload : Dict[str, Any]) -> Dict[str, Any]:
 		'reference_face_distance': lambda value: 0.05 <= float(value) <= 0.95,
 		'face_detector_model': lambda value: value in facefusion.choices.face_detector_models,
 		'face_detector_score': lambda value: 0.05 <= float(value) <= 0.95,
+		'rotated_faces': lambda value: isinstance(value, bool),
 		'output_image_quality': lambda value: 10 <= int(value) <= 100,
 		'output_video_quality': lambda value: 10 <= int(value) <= 100,
 		'execution_provider': lambda value: value in facefusion.execution.get_available_execution_providers()
@@ -1207,7 +1211,7 @@ def update_settings(payload : Dict[str, Any]) -> Dict[str, Any]:
 		if SETTINGS.get('face_swapper_pixel_boost') not in pixel_boost_choices:
 			SETTINGS['face_swapper_pixel_boost'] = pixel_boost_choices[0]
 
-		if 'face_detector_model' in payload or 'face_detector_score' in payload:
+		if any(key in payload for key in [ 'face_detector_model', 'face_detector_score', 'rotated_faces' ]):
 			clear_static_faces()
 		apply_settings()
 

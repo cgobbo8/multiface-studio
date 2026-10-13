@@ -240,12 +240,19 @@ def build_sticker_track(raw_anchors : numpy.ndarray, video_fps : float) -> numpy
 		segment_ids[frame_number] = segment_id
 		previous_number = frame_number
 
+	# the roll wraps around at ±180°: unwrapped within each segment, an upside-down head is not averaged back to upright
+	for segment in range(segment_id + 1):
+		segment_numbers = numpy.flatnonzero(segment_ids == segment)
+		sticker_track[segment_numbers, 3] = numpy.degrees(numpy.unwrap(numpy.radians(raw_anchors[segment_numbers, 3])))
+
+	angle_track = sticker_track[:, 3:].copy()
+
 	# a lone pose glitch between two agreeing neighbours takes their angles
 	for frame_number in known_numbers:
 		if 0 < frame_number < frame_total - 1 and segment_ids[frame_number - 1] == segment_ids[frame_number] == segment_ids[frame_number + 1]:
-			neighbour_angles = (raw_anchors[frame_number - 1, 3:] + raw_anchors[frame_number + 1, 3:]) / 2
-			is_agreeing = numpy.abs(raw_anchors[frame_number - 1, 3:] - raw_anchors[frame_number + 1, 3:]).max() < 15
-			is_glitch = numpy.abs(raw_anchors[frame_number, 3:] - neighbour_angles).max() > 25
+			neighbour_angles = (angle_track[frame_number - 1] + angle_track[frame_number + 1]) / 2
+			is_agreeing = numpy.abs(angle_track[frame_number - 1] - angle_track[frame_number + 1]).max() < 15
+			is_glitch = numpy.abs(angle_track[frame_number] - neighbour_angles).max() > 25
 
 			if is_agreeing and is_glitch:
 				sticker_track[frame_number, 3:] = neighbour_angles
@@ -255,6 +262,7 @@ def build_sticker_track(raw_anchors : numpy.ndarray, video_fps : float) -> numpy
 	for frame_number in known_numbers:
 		window_numbers = [ number for number in range(frame_number - STICKER_TRACK_SMOOTHING, frame_number + STICKER_TRACK_SMOOTHING + 1) if 0 <= number < frame_total and segment_ids[number] == segment_ids[frame_number] ]
 		smooth_track[frame_number] = sticker_track[window_numbers].mean(axis = 0)
+	smooth_track[:, 3] = (smooth_track[:, 3] + 180) % 360 - 180
 	return smooth_track
 
 

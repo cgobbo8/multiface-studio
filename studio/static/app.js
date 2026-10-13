@@ -1975,7 +1975,8 @@ function settingsSchema()
 			[
 				{ type: 'slider', key: 'reference_face_distance', label: t('settings.distance'), min: 0.05, max: 0.95, step: 0.05, format: value => formatPercent(Math.round(value * 100)) },
 				{ type: 'select', key: 'face_detector_model', label: t('settings.detector'), choices: options.face_detector_models.map(value => ({ value, label: value === 'many' ? t('settings.detector_all') : value })) },
-				{ type: 'slider', key: 'face_detector_score', label: t('settings.detector_score'), min: 0.05, max: 0.95, step: 0.05, format: value => formatPercent(Math.round(value * 100)) }
+				{ type: 'slider', key: 'face_detector_score', label: t('settings.detector_score'), min: 0.05, max: 0.95, step: 0.05, format: value => formatPercent(Math.round(value * 100)) },
+				{ type: 'switch', key: 'rotated_faces', label: t('settings.rotated_faces') }
 			],
 			footnote: t('settings.recognition_note')
 		},
@@ -2137,7 +2138,7 @@ function saveSetting(key, value, rebuild)
 				state.options = await request('GET', '/api/options').catch(() => state.options);
 				buildSettings();
 			}
-			if ([ 'face_detector_model', 'face_detector_score', 'reference_face_distance' ].includes(key))
+			if ([ 'face_detector_model', 'face_detector_score', 'rotated_faces', 'reference_face_distance' ].includes(key))
 			{
 				fetchFaces();
 			}
