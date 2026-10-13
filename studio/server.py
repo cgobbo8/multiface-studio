@@ -645,6 +645,7 @@ def install_progress_hooks() -> None:
 	def process_video() -> Any:
 		frame_counter['done'] = 0
 		frame_counter['total'] = max(1, len(resolve_temp_frame_paths(state_manager.get_item('target_path'))))
+		analyse_counter['done'] = 0
 		TASK['stage'] = 'Remplacement des visages'
 		return original_process_video()
 
@@ -652,13 +653,29 @@ def install_progress_hooks() -> None:
 		result = original_process_temp_frame(temp_frame_path, frame_number)
 
 		with frame_counter_lock:
+			TASK['stage'] = 'Remplacement des visages'
 			frame_counter['done'] += 1
 			TASK['progress'] = 0.1 + 0.8 * frame_counter.get('done') / frame_counter.get('total')
 			TASK['message'] = str(frame_counter.get('done')) + ' / ' + str(frame_counter.get('total')) + ' images'
 		return result
 
+	original_analyse_sticker_frame = face_sticker_core.analyse_sticker_frame
+	analyse_counter = { 'done': 0 }
+
+	def analyse_sticker_frame(frame_number : int, temp_frame_path : str) -> Any:
+		result = original_analyse_sticker_frame(temp_frame_path = temp_frame_path, frame_number = frame_number)
+
+		# the sticker tracking pass reads the whole video before any frame gets rendered
+		with frame_counter_lock:
+			analyse_counter['done'] += 1
+			TASK['stage'] = 'Suivi des têtes'
+			TASK['progress'] = max(TASK.get('progress'), 0.03 + 0.07 * min(1.0, analyse_counter.get('done') / frame_counter.get('total')))
+			TASK['message'] = str(min(analyse_counter.get('done'), frame_counter.get('total'))) + ' / ' + str(frame_counter.get('total')) + ' images analysées'
+		return result
+
 	image_to_video.process_video = process_video
 	image_to_video.process_temp_frame = process_temp_frame
+	face_sticker_core.analyse_sticker_frame = analyse_sticker_frame
 	wrap_stage(image_to_video, 'setup', 'Analyse du contenu', 0.0)
 	wrap_stage(image_to_video, 'extract_frames', 'Extraction des images', 0.03)
 	wrap_stage(image_to_video, 'merge_frames', 'Assemblage de la vidéo', 0.9)

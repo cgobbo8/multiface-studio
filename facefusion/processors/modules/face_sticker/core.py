@@ -1,33 +1,32 @@
 import math
 from argparse import ArgumentParser
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
-from typing import Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy
 
-from facefusion import logger, state_manager, translator
+from facefusion import logger, process_manager, state_manager, translator
 from facefusion.face_analyser import scale_face
-from facefusion.face_mapper import has_face_mapping_sticker, select_sticker_faces
+from facefusion.face_mapper import get_face_mappings, has_face_mapping_sticker, select_sticker_faces
 from facefusion.filesystem import in_directory, is_image, is_video, same_file_extension
 from facefusion.processors.types import ProcessorOutputs
-from facefusion.types import ApplyStateItem, Args, Face, FaceStickerOptions, InferencePool, ProcessMode, VisionFrame
-from facefusion.vision import read_static_image, read_static_video_frame
+from facefusion.types import ApplyStateItem, Args, Face, FaceMapping, FaceStickerOptions, InferencePool, ProcessMode, VisionFrame
+from facefusion.vision import read_image, read_static_image, read_static_video_frame
 
 FaceStickerAnchor = Tuple[float, float, float, float, float, float]
-# generic head (nose tip, chin, outer eye corners, mouth corners), y up and the nose pointing to +z
-HEAD_MODEL_POINTS = numpy.array(
-[
-	[ 0.0, 0.0, 0.0 ],
-	[ 0.0, -330.0, -65.0 ],
-	[ -225.0, 170.0, -135.0 ],
-	[ 225.0, 170.0, -135.0 ],
-	[ -150.0, -150.0, -125.0 ],
-	[ 150.0, -150.0, -125.0 ]
-], dtype = numpy.float64)
-HEAD_PITCH_BIAS = 10.0
+# head pose from the detector's 5 points, gains calibrated against solvePnP on sharp faces
+HEAD_YAW_GAIN = 2.8
+HEAD_PITCH_GAIN = 1.2
+HEAD_PITCH_NEUTRAL = 0.69
 HEAD_ANGLE_LIMIT = 75.0
 STICKER_PERSPECTIVE = 3.0
+# seconds a briefly undetected head keeps its sticker, inside a track and at its edges
+STICKER_TRACK_GAP = 0.5
+STICKER_TRACK_HOLD = 0.15
+STICKER_TRACK_SMOOTHING = 2
+STICKER_TRACKS : Dict[int, numpy.ndarray] = {}
 
 
 def get_inference_pool() -> InferencePool:
@@ -67,6 +66,7 @@ def pre_process(mode : ProcessMode) -> bool:
 
 
 def post_process() -> None:
+	STICKER_TRACKS.clear()
 	read_sticker_frame.cache_clear()
 	prepare_sticker_frame.cache_clear()
 	read_static_image.cache_clear()
@@ -119,25 +119,22 @@ def calculate_sticker_anchor(face : Face) -> FaceStickerAnchor:
 
 
 def estimate_head_pose(face : Face) -> Tuple[float, float]:
-	face_landmark_68 = face.landmark_set.get('68')
-	start_x, start_y, end_x, end_y = face.bounding_box
-	face_size = max(end_x - start_x, end_y - start_y)
-	image_points = numpy.array([ face_landmark_68[30], face_landmark_68[8], face_landmark_68[36], face_landmark_68[45], face_landmark_68[48], face_landmark_68[54] ], dtype = numpy.float64)
-	focal_length = face_size * 4
-	camera_matrix = numpy.array([ [ focal_length, 0, (start_x + end_x) / 2 ], [ 0, focal_length, (start_y + end_y) / 2 ], [ 0, 0, 1 ] ], dtype = numpy.float64)
-	# start from a frontal head in front of the camera, otherwise the solver may land on the mirrored pose
-	rotation_vector = numpy.array([ [ math.pi ], [ 0.0 ], [ 0.0 ] ])
-	translation_vector = numpy.array([ [ 0.0 ], [ 0.0 ], [ focal_length * 600 / max(face_size, 1) ] ])
-	is_solved, rotation_vector, translation_vector = cv2.solvePnP(HEAD_MODEL_POINTS, image_points, camera_matrix, None, rotation_vector, translation_vector, useExtrinsicGuess = True, flags = cv2.SOLVEPNP_ITERATIVE)
-
-	if not is_solved:
-		return 0.0, 0.0
-
-	rotation_matrix, _ = cv2.Rodrigues(rotation_vector)
-	face_normal = rotation_matrix @ numpy.array([ 0.0, 0.0, 1.0 ])
-	# camera space: x right, y down, z away; positive pitch looks up, positive yaw looks to the image right
-	face_pitch = math.degrees(math.atan2(-face_normal[1], -face_normal[2])) + HEAD_PITCH_BIAS
-	face_yaw = math.degrees(math.atan2(face_normal[0], -face_normal[2]))
+	# the 68 landmarks turn to noise on small or blurry faces (low landmarker score), the detector's 5 points stay sane
+	face_landmark_5 = face.landmark_set.get('5').astype(numpy.float64)
+	left_eye, right_eye = face_landmark_5[0], face_landmark_5[1]
+	roll = math.atan2(right_eye[1] - left_eye[1], right_eye[0] - left_eye[0])
+	rotation_matrix = numpy.array([ [ math.cos(roll), math.sin(roll) ], [ -math.sin(roll), math.cos(roll) ] ])
+	# upright face frame centred on the nose: x to the image right, y down
+	face_points = (face_landmark_5 - face_landmark_5[2]) @ rotation_matrix.T
+	eye_center = (face_points[0] + face_points[1]) / 2
+	mouth_center = (face_points[3] + face_points[4]) / 2
+	eye_distance = max(face_points[1][0] - face_points[0][0], 1e-6)
+	eye_mouth_distance = max(mouth_center[1] - eye_center[1], 1e-6)
+	# the nose drifts sideways when the head turns, and towards the eyes when it looks up
+	yaw_ratio = -eye_center[0] / eye_distance
+	pitch_ratio = -eye_center[1] / eye_mouth_distance
+	face_yaw = math.degrees(math.asin(numpy.clip(yaw_ratio * HEAD_YAW_GAIN, -1, 1)))
+	face_pitch = math.degrees(math.asin(numpy.clip((HEAD_PITCH_NEUTRAL - pitch_ratio) * HEAD_PITCH_GAIN, -1, 1)))
 	return float(numpy.clip(face_pitch, -HEAD_ANGLE_LIMIT, HEAD_ANGLE_LIMIT)), float(numpy.clip(face_yaw, -HEAD_ANGLE_LIMIT, HEAD_ANGLE_LIMIT))
 
 
@@ -153,8 +150,8 @@ def project_sticker_corners(width : float, height : float, roll : float, pitch :
 	return points[:, :2] / (1 - points[:, 2:3] / perspective)
 
 
-def paste_sticker(temp_vision_frame : VisionFrame, target_face : Face, sticker_frame : VisionFrame, sticker_options : FaceStickerOptions) -> VisionFrame:
-	center_x, center_y, face_size, face_angle, face_pitch, face_yaw = calculate_sticker_anchor(target_face)
+def paste_sticker(temp_vision_frame : VisionFrame, sticker_anchor : FaceStickerAnchor, sticker_frame : VisionFrame, sticker_options : FaceStickerOptions) -> VisionFrame:
+	center_x, center_y, face_size, face_angle, face_pitch, face_yaw = sticker_anchor
 	angle = (face_angle if sticker_options.get('follow_rotation') else 0.0) + sticker_options.get('rotation')
 	depth = sticker_options.get('depth') or 0.0
 	radians = math.radians(angle)
@@ -195,17 +192,121 @@ def paste_sticker(temp_vision_frame : VisionFrame, target_face : Face, sticker_f
 	return paste_vision_frame
 
 
+def paste_mapping_sticker(temp_vision_frame : VisionFrame, sticker_anchor : FaceStickerAnchor, face_mapping : FaceMapping) -> VisionFrame:
+	sticker_options = face_mapping.get('sticker_options')
+	sticker_frame = prepare_sticker_frame(face_mapping.get('sticker_path'), bool(sticker_options.get('mirror')), bool(sticker_options.get('round')))
+
+	if sticker_frame is None:
+		return temp_vision_frame
+	return paste_sticker(temp_vision_frame, sticker_anchor, sticker_frame, sticker_options)
+
+
+def prepare_frames(temp_frame_paths : List[str]) -> None:
+	# videos get one track per person: glitches dropped, short misses bridged, motion smoothed
+	STICKER_TRACKS.clear()
+	face_mappings = get_face_mappings()
+	sticker_mapping_indices = [ index for index, face_mapping in enumerate(face_mappings) if face_mapping.get('sticker_path') ]
+
+	if not sticker_mapping_indices:
+		return
+
+	raw_anchors = numpy.full((len(face_mappings), len(temp_frame_paths), 6), numpy.nan)
+
+	with ThreadPoolExecutor(max_workers = state_manager.get_item('execution_thread_count')) as executor:
+		for frame_number, sticker_anchors in executor.map(analyse_sticker_frame, range(len(temp_frame_paths)), temp_frame_paths):
+			for mapping_index, sticker_anchor in sticker_anchors:
+				raw_anchors[mapping_index, frame_number] = sticker_anchor
+
+	video_fps = state_manager.get_item('output_video_fps') or 25.0
+
+	for mapping_index in sticker_mapping_indices:
+		STICKER_TRACKS[mapping_index] = build_sticker_track(raw_anchors[mapping_index], video_fps)
+
+
+def analyse_sticker_frame(frame_number : int, temp_frame_path : str) -> Tuple[int, List[Tuple[int, FaceStickerAnchor]]]:
+	sticker_anchors : List[Tuple[int, FaceStickerAnchor]] = []
+
+	if process_manager.is_stopping():
+		return frame_number, sticker_anchors
+
+	# uncached read: a whole video must not pile up in memory, the face store still keeps the detections
+	vision_frame = read_image(temp_frame_path)
+
+	if vision_frame is not None:
+		mapping_indices = { id(face_mapping): index for index, face_mapping in enumerate(get_face_mappings()) }
+
+		for target_face, face_mapping in select_sticker_faces(vision_frame):
+			sticker_anchors.append((mapping_indices.get(id(face_mapping)), calculate_sticker_anchor(target_face)))
+	return frame_number, sticker_anchors
+
+
+def build_sticker_track(raw_anchors : numpy.ndarray, video_fps : float) -> numpy.ndarray:
+	frame_total = len(raw_anchors)
+	sticker_track = raw_anchors.copy()
+	is_detected = ~numpy.isnan(raw_anchors[:, 0])
+
+	# a detection that disagrees with its neighbours is a glitch (wrong face, broken landmarks): treat it as a miss
+	for frame_number in numpy.flatnonzero(is_detected):
+		neighbour_numbers = [ number for number in range(frame_number - 3, frame_number + 4) if number != frame_number and 0 <= number < frame_total and is_detected[number] ]
+
+		if len(neighbour_numbers) >= 2:
+			neighbour_anchor = numpy.median(raw_anchors[neighbour_numbers], axis = 0)
+			face_size = neighbour_anchor[2]
+			is_moved = math.dist(raw_anchors[frame_number, :2], neighbour_anchor[:2]) > face_size * 0.5
+			is_resized = abs(raw_anchors[frame_number, 2] - face_size) > face_size * 0.4
+			is_turned = numpy.abs(raw_anchors[frame_number, 3:] - neighbour_anchor[3:]).max() > 30
+
+			if is_moved or is_resized or is_turned:
+				sticker_track[frame_number] = numpy.nan
+
+	# bridge short misses by interpolating between the frames around them
+	gap_total = max(1, round(video_fps * STICKER_TRACK_GAP))
+	known_numbers = numpy.flatnonzero(~numpy.isnan(sticker_track[:, 0]))
+
+	for start_number, end_number in zip(known_numbers[:-1], known_numbers[1:]):
+		if 1 < end_number - start_number <= gap_total + 1:
+			missing_numbers = numpy.arange(start_number + 1, end_number)
+
+			for component in range(sticker_track.shape[1]):
+				sticker_track[missing_numbers, component] = numpy.interp(missing_numbers, [ start_number, end_number ], [ sticker_track[start_number, component], sticker_track[end_number, component] ])
+
+	# heads entering or leaving often lose detection a little early: hold the edges briefly
+	hold_total = round(video_fps * STICKER_TRACK_HOLD)
+	is_known = ~numpy.isnan(sticker_track[:, 0])
+	hold_track = sticker_track.copy()
+
+	for frame_number in numpy.flatnonzero(is_known):
+		for hold_number in range(frame_number - hold_total, frame_number + hold_total + 1):
+			if 0 <= hold_number < frame_total and numpy.isnan(hold_track[hold_number, 0]):
+				hold_track[hold_number] = sticker_track[frame_number]
+
+	# light centred moving average against jitter
+	is_known = ~numpy.isnan(hold_track[:, 0])
+	smooth_track = hold_track.copy()
+
+	for frame_number in numpy.flatnonzero(is_known):
+		window_numbers = [ number for number in range(frame_number - STICKER_TRACK_SMOOTHING, frame_number + STICKER_TRACK_SMOOTHING + 1) if 0 <= number < frame_total and is_known[number] ]
+		smooth_track[frame_number] = hold_track[window_numbers].mean(axis = 0)
+	return smooth_track
+
+
 def process_frame(inputs : dict) -> ProcessorOutputs:
 	target_vision_frame = inputs.get('target_vision_frame')
 	temp_vision_frame = inputs.get('temp_vision_frame')
 	temp_vision_mask = inputs.get('temp_vision_mask')
+	frame_number = inputs.get('frame_number')
 
+	if STICKER_TRACKS and frame_number is not None:
+		face_mappings = get_face_mappings()
+
+		for mapping_index, sticker_track in STICKER_TRACKS.items():
+			if frame_number < len(sticker_track) and not numpy.isnan(sticker_track[frame_number, 0]):
+				temp_vision_frame = paste_mapping_sticker(temp_vision_frame, tuple(sticker_track[frame_number]), face_mappings[mapping_index])
+		return temp_vision_frame, temp_vision_mask
+
+	# photos and previews: no track, the head found in this very frame is used
 	for target_face, face_mapping in select_sticker_faces(target_vision_frame):
-		sticker_options = face_mapping.get('sticker_options')
-		sticker_frame = prepare_sticker_frame(face_mapping.get('sticker_path'), bool(sticker_options.get('mirror')), bool(sticker_options.get('round')))
-
-		if sticker_frame is not None:
-			target_face = scale_face(target_face, target_vision_frame, temp_vision_frame)
-			temp_vision_frame = paste_sticker(temp_vision_frame, target_face, sticker_frame, sticker_options)
+		target_face = scale_face(target_face, target_vision_frame, temp_vision_frame)
+		temp_vision_frame = paste_mapping_sticker(temp_vision_frame, calculate_sticker_anchor(target_face), face_mapping)
 
 	return temp_vision_frame, temp_vision_mask

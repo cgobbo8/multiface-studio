@@ -75,6 +75,11 @@ def process_video() -> ErrorCode:
 	temp_frame_paths = resolve_temp_frame_paths(state_manager.get_item('target_path'))
 
 	if temp_frame_paths:
+		# processors that work across frames (tracking, smoothing) get to see the whole video first
+		for processor_module in get_processors_modules(state_manager.get_item('processors')):
+			if hasattr(processor_module, 'prepare_frames'):
+				processor_module.prepare_frames(temp_frame_paths)
+
 		with tqdm(total = len(temp_frame_paths), desc = translator.get('processing'), unit = 'frame', ascii = ' =', disable = state_manager.get_item('log_level') in [ 'warn', 'error' ]) as progress:
 			progress.set_postfix(execution_providers = state_manager.get_item('execution_providers'))
 
@@ -178,7 +183,8 @@ def process_temp_frame(temp_frame_path : str, frame_number : int) -> bool:
 			'source_voice_frame': source_voice_frame,
 			'target_vision_frame': target_vision_frame[:, :, :3],
 			'temp_vision_frame': temp_vision_frame[:, :, :3],
-			'temp_vision_mask': temp_vision_mask
+			'temp_vision_mask': temp_vision_mask,
+			'frame_number': frame_number
 		})
 
 	temp_vision_frame = conditional_merge_vision_mask(temp_vision_frame, temp_vision_mask)
