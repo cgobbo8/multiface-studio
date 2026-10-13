@@ -9,6 +9,9 @@ const I18N =
 
 		'toolbar.open': 'Ouvrir',
 		'toolbar.open_title': 'Ouvrir une photo ou une vidéo',
+		'toolbar.replace_video': 'Changer de vidéo',
+		'toolbar.replace_image': 'Changer de photo',
+		'toolbar.replace_title': 'Remplacer par une autre photo ou vidéo',
 		'toolbar.settings': 'Réglages',
 		'toolbar.render': 'Générer',
 		'toolbar.render_count': 'Générer · {count}',
@@ -119,7 +122,15 @@ const I18N =
 		'toast.need_stickers': 'Ajoutez d’abord des images',
 
 		'drop.open': 'Déposer pour ouvrir',
-		'drop.replace': 'Déposez sur la vidéo/photo pour la remplacer, ou sur une personne',
+		'drop.replace_video': 'Déposer ici pour remplacer la vidéo',
+		'drop.replace_image': 'Déposer ici pour remplacer la photo',
+		'drop.replace_hint': 'ou sur le + d’une personne pour la lui associer',
+
+		'replace.title_video': 'Remplacer la vidéo ?',
+		'replace.title_image': 'Remplacer la photo ?',
+		'replace.message': '« {name} » prendra sa place. Les personnes détectées et les sources qui leur sont associées seront retirées ; votre bibliothèque de sources est conservée.',
+		'replace.accept': 'Remplacer',
+		'replace.cancel': 'Annuler',
 
 		'import.stage': 'Import',
 		'import.detecting': 'Détection des visages',
@@ -227,6 +238,9 @@ const I18N =
 
 		'toolbar.open': 'Open',
 		'toolbar.open_title': 'Open a photo or a video',
+		'toolbar.replace_video': 'Change video',
+		'toolbar.replace_image': 'Change photo',
+		'toolbar.replace_title': 'Replace with another photo or video',
 		'toolbar.settings': 'Settings',
 		'toolbar.render': 'Generate',
 		'toolbar.render_count': 'Generate · {count}',
@@ -337,7 +351,15 @@ const I18N =
 		'toast.need_stickers': 'Add images first',
 
 		'drop.open': 'Drop to open',
-		'drop.replace': 'Drop on the video/photo to replace it, or on a person',
+		'drop.replace_video': 'Drop here to replace the video',
+		'drop.replace_image': 'Drop here to replace the photo',
+		'drop.replace_hint': 'or on a person’s + to assign it to them',
+
+		'replace.title_video': 'Replace the video?',
+		'replace.title_image': 'Replace the photo?',
+		'replace.message': '“{name}” will take its place. The detected people and the sources assigned to them will be removed; your source library is kept.',
+		'replace.accept': 'Replace',
+		'replace.cancel': 'Cancel',
 
 		'import.stage': 'Import',
 		'import.detecting': 'Detecting faces',

@@ -6,6 +6,7 @@ const el =
 {
 	targetCaption: $('#target-caption'),
 	openTarget: $('#open-target'),
+	openTargetLabel: $('#open-target-label'),
 	openSettings: $('#open-settings'),
 	render: $('#render'),
 	renderLabel: $('#render-label'),
@@ -21,6 +22,8 @@ const el =
 	stickerLayer: $('#sticker-layer'),
 	compareHandle: $('#compare-handle'),
 	frameSpinner: $('#frame-spinner'),
+	canvasDrop: $('#canvas-drop'),
+	canvasDropText: $('#canvas-drop-text'),
 	timeline: $('#timeline'),
 	scrubber: $('#scrubber'),
 	scrubberTrim: $('#scrubber-trim'),
@@ -65,6 +68,11 @@ const el =
 	revealResult: $('#reveal-result'),
 	revealLabel: $('#reveal-label'),
 	downloadResult: $('#download-result'),
+	confirm: $('#confirm'),
+	confirmTitle: $('#confirm-title'),
+	confirmMessage: $('#confirm-message'),
+	confirmAccept: $('#confirm-accept'),
+	confirmCancel: $('#confirm-cancel'),
 	dropOverlay: $('#drop-overlay'),
 	dropOverlayText: $('#drop-overlay-text'),
 	toasts: $('#toasts'),
@@ -266,6 +274,11 @@ function formatTimecode(frameNumber)
 	return t('timeline.timecode', { time: String(minutes).padStart(2, '0') + ':' + rest.toFixed(2).padStart(5, '0'), frame: frameNumber + 1, total: target().frame_total });
 }
 
+function shortcutLabel(key)
+{
+	return (/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+') + key;
+}
+
 function toast(message, kind = 'success', duration = 3400)
 {
 	const node = document.createElement('div');
@@ -314,6 +327,11 @@ function renderToolbar()
 	const count = assignedCount();
 
 	el.targetCaption.textContent = target() ? target().name + ' · ' + target().width + '×' + target().height : t('app.caption');
+	// once a target is loaded the open button says what it really does: replace it
+	el.openTarget.classList.toggle('is-replace', Boolean(target()));
+	el.openTargetLabel.textContent = target() ? t(isVideo() ? 'toolbar.replace_video' : 'toolbar.replace_image') : t('toolbar.open');
+	el.openTarget.title = t(target() ? 'toolbar.replace_title' : 'toolbar.open_title') + ' (' + shortcutLabel('O') + ')';
+	el.openTarget.disabled = isBusy();
 	el.renderLabel.textContent = count ? t('toolbar.render_count', { count }) : t('toolbar.render');
 	el.render.disabled = !target() || !count || isBusy();
 }
@@ -1357,34 +1375,38 @@ function makeDropZone(node, handlers)
 function installGlobalDrop()
 {
 	let depth = 0;
+	const endDrag = () =>
+	{
+		depth = 0;
+		el.dropOverlay.hidden = true;
+		el.canvasDrop.hidden = true;
+		document.body.classList.remove('is-dragging');
+	};
 
+	// counted while capturing: the drop zones stop these events before they would bubble up here
 	window.addEventListener('dragenter', event =>
 	{
-		if (dragKind(event) === 'files')
+		if (dragKind(event) === 'files' && !depth++)
 		{
-			depth++;
-			el.dropOverlayText.textContent = target() ? t('drop.replace') : t('drop.open');
+			el.dropOverlayText.textContent = t('drop.open');
 			el.dropOverlay.hidden = Boolean(target());
+			el.canvasDropText.textContent = t(isVideo() ? 'drop.replace_video' : 'drop.replace_image');
+			el.canvasDrop.hidden = !target() || isBusy();
 			document.body.classList.add('is-dragging');
 		}
-	});
-	window.addEventListener('dragleave', () =>
+	}, true);
+	window.addEventListener('dragleave', event =>
 	{
-		depth = Math.max(0, depth - 1);
-
-		if (!depth)
+		if (dragKind(event) === 'files' && depth && !--depth)
 		{
-			el.dropOverlay.hidden = true;
-			document.body.classList.remove('is-dragging');
+			endDrag();
 		}
-	});
+	}, true);
+	window.addEventListener('drop', endDrag, true);
 	window.addEventListener('dragover', event => event.preventDefault());
 	window.addEventListener('drop', event =>
 	{
 		event.preventDefault();
-		depth = 0;
-		el.dropOverlay.hidden = true;
-		document.body.classList.remove('is-dragging');
 
 		if (dragKind(event) === 'files' && !target() && event.dataTransfer.files.length)
 		{
@@ -1406,6 +1428,11 @@ async function openTarget(file)
 	if (!file.type.startsWith('image/') && !file.type.startsWith('video/'))
 	{
 		toast(t('toast.pick_media'), 'error');
+		return;
+	}
+	// replacing the target resets the people, so assignments are only dropped on purpose
+	if (assignedCount() && !await confirmDialog(t(isVideo() ? 'replace.title_video' : 'replace.title_image'), t('replace.message', { name: file.name })))
+	{
 		return;
 	}
 	state.importing = true;
@@ -1446,6 +1473,42 @@ async function openTarget(file)
 			hideHud();
 		}
 	}
+}
+
+function confirmDialog(title, message)
+{
+	return new Promise(resolve =>
+	{
+		const close = answer =>
+		{
+			el.confirm.hidden = true;
+			el.confirmAccept.removeEventListener('click', accept);
+			el.confirmCancel.removeEventListener('click', cancel);
+			el.confirm.removeEventListener('click', backdrop);
+			document.removeEventListener('keydown', keydown, true);
+			resolve(answer);
+		};
+		const accept = () => close(true);
+		const cancel = () => close(false);
+		const backdrop = event => event.target === el.confirm && close(false);
+		const keydown = event =>
+		{
+			if (event.key === 'Escape')
+			{
+				event.stopPropagation();
+				close(false);
+			}
+		};
+
+		el.confirmTitle.textContent = title;
+		el.confirmMessage.textContent = message;
+		el.confirmAccept.addEventListener('click', accept);
+		el.confirmCancel.addEventListener('click', cancel);
+		el.confirm.addEventListener('click', backdrop);
+		document.addEventListener('keydown', keydown, true);
+		el.confirm.hidden = false;
+		el.confirmAccept.focus();
+	});
 }
 
 /* ------------------------------------------------------------ tasks */
@@ -1853,10 +1916,10 @@ function setLanguage(language)
 {
 	writeLanguage(language);
 	applyTranslations();
+	render();
 
-	if (state.session)
+	if (state.session && state.options)
 	{
-		render();
 		buildSettings();
 	}
 	if (state.faces.length)
@@ -1999,7 +2062,18 @@ function installEvents()
 {
 	el.openTarget.addEventListener('click', () => el.targetInput.click());
 	el.pickTarget.addEventListener('click', () => el.targetInput.click());
-	el.targetInput.addEventListener('change', () => el.targetInput.files.length && openTarget(el.targetInput.files[0]));
+	el.targetInput.addEventListener('change', () =>
+	{
+		const file = el.targetInput.files[0];
+
+		// cleared so picking the same file again still counts as a change
+		el.targetInput.value = '';
+
+		if (file)
+		{
+			openTarget(file);
+		}
+	});
 	el.addSources.addEventListener('click', () => el.sourcesInput.click());
 	el.sourcesInput.addEventListener('change', () =>
 	{
@@ -2078,6 +2152,15 @@ function installEvents()
 			closeSettings();
 			closeResult();
 			setArmed(null);
+		}
+		if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'o')
+		{
+			event.preventDefault();
+
+			if (!isBusy() && !state.importing)
+			{
+				el.targetInput.click();
+			}
 		}
 		if (!typing && isVideo() && document.activeElement !== el.scrubber)
 		{
@@ -2207,6 +2290,7 @@ async function boot()
 {
 	applyTheme();
 	applyTranslations();
+	renderToolbar();
 	installEvents();
 
 	try

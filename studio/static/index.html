@@ -26,9 +26,10 @@
 			</div>
 		</div>
 		<div class="toolbar-trailing">
-			<button class="button button-plain" id="open-target" data-i18n-title="toolbar.open_title" title="Ouvrir une photo ou une vidéo">
-				<svg class="icon" viewBox="0 0 24 24"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h3l2 2h6A2.5 2.5 0 0 1 20 9.5v7a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5z"/></svg>
-				<span class="label-wide" data-i18n="toolbar.open">Ouvrir</span>
+			<button class="button button-plain" id="open-target" title="Ouvrir une photo ou une vidéo">
+				<svg class="icon icon-open" viewBox="0 0 24 24"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h3l2 2h6A2.5 2.5 0 0 1 20 9.5v7a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5z"/></svg>
+				<svg class="icon icon-replace" viewBox="0 0 24 24"><path d="M5 8.5h12.5M14.5 5.5l3 3-3 3M19 15.5H6.5M9.5 12.5l-3 3 3 3"/></svg>
+				<span class="label-wide" id="open-target-label">Ouvrir</span>
 			</button>
 			<button class="button button-plain" id="open-settings" data-i18n-title="toolbar.settings" title="Réglages">
 				<svg class="icon" viewBox="0 0 24 24"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z"/><path d="M19.4 13.5a7.7 7.7 0 0 0 0-3l2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A7.6 7.6 0 0 0 7 6.5l-2.4-1-2 3.4 2 1.6a7.7 7.7 0 0 0 0 3l-2 1.6 2 3.4 2.4-1a7.6 7.6 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a7.6 7.6 0 0 0 2.6-1.5l2.4 1 2-3.4z"/></svg>
@@ -72,6 +73,14 @@
 						<div class="compare-handle" id="compare-handle" hidden><span></span></div>
 						<div class="frame-spinner" id="frame-spinner" hidden><span class="spinner"></span></div>
 					</figure>
+
+					<div class="canvas-drop" id="canvas-drop" hidden>
+						<div class="canvas-drop-label">
+							<svg class="icon" viewBox="0 0 24 24"><path d="M5 8.5h12.5M14.5 5.5l3 3-3 3M19 15.5H6.5M9.5 12.5l-3 3 3 3"/></svg>
+							<strong id="canvas-drop-text"></strong>
+							<span data-i18n="drop.replace_hint">ou sur le + d’une personne pour la lui associer</span>
+						</div>
+					</div>
 				</div>
 
 				<div class="timeline" id="timeline" hidden>
@@ -189,6 +198,18 @@
 					<svg class="icon" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>
 					<span data-i18n="result.download">Télécharger</span>
 				</a>
+			</div>
+		</div>
+	</div>
+
+	<div class="hud-backdrop" id="confirm" hidden>
+		<div class="alert glass" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+			<div class="alert-icon"><svg viewBox="0 0 24 24"><path d="M5 8.5h12.5M14.5 5.5l3 3-3 3M19 15.5H6.5M9.5 12.5l-3 3 3 3"/></svg></div>
+			<h3 id="confirm-title"></h3>
+			<p id="confirm-message"></p>
+			<div class="alert-actions">
+				<button class="button button-plain" id="confirm-cancel" data-i18n="replace.cancel">Annuler</button>
+				<button class="button button-primary" id="confirm-accept" data-i18n="replace.accept">Remplacer</button>
 			</div>
 		</div>
 	</div>

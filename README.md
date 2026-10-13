@@ -37,6 +37,7 @@ Sinon, les modèles de base (~1 Go) sont téléchargés au premier démarrage, a
 ## Utilisation
 
 1. **Ouvrir** une photo ou une vidéo (ou la glisser dans la fenêtre). Pour une vidéo, l’analyse de toutes les personnes démarre automatiquement.
+   Pour passer à un autre fichier : **Changer de vidéo** / **Changer de photo** (⌘O ou Ctrl+O), ou glissez le nouveau fichier sur l’image. Si des sources sont déjà associées, une confirmation s’affiche avant de les retirer ; la bibliothèque de sources est conservée.
 2. Dans **Sources**, ajoutez les photos des nouveaux visages (onglet **Visages**) et/ou des images à coller (onglet **Images**).
 3. Associez une source à chaque personne voulue :
    - glissez-la sur le « + » de la personne ;
