@@ -19,6 +19,7 @@ The engine is [FaceFusion 3.5.4](https://github.com/facefusion/facefusion) with 
 - **One-to-one assignment**: two lookalikes never get the same source in the same frame.
 - **Persistence in videos**: when detection misses a face for a few frames (blur, a hand in front), the swap or the pasted image carries on (up to 0.25 s), only if the head stayed almost in place. A face that is detected but not recognised (profile) is attached to the right person. Nothing is ever filled in across a cut or onto another person.
 - **Preview and before/after comparison** on any frame of the video.
+- **Live camera**: the same per-person faces and pasted images on your webcam, in real time, with a clean window to capture in OBS and send to Meet, Zoom or Slack through OBS's virtual camera.
 - **Video clip**: under the video, a filmstrip with two handles to drag (as in Photos); the **I** and **O** keys set the start and the end at the current frame. Only the clip gets analysed and rendered.
 - Render progress and cancellation.
 - **Visible model downloads**: name, percentage and MB received.
@@ -49,6 +50,17 @@ Otherwise the base models (~1 GB) are downloaded on the first start, with their 
 5. **Generate**. The result is saved in `app/workspace/outputs/`.
 
 To keep only part of a video, drag the handles of the filmstrip under the video, or go to a frame and press **I** (start) or **O** (end).
+### Live camera
+
+Click **Live** (or **Use my camera** on the start screen) and allow the camera. The people in front of the camera are detected on their own; give them faces or images like for a photo, the stream updates on the next frame.
+
+- **Fluid** uses the fast InSwapper 128 model, **Sharp** the model picked in the settings (nicer, slower). On an M4 Pro, expect about 7–13 frames per second with one swapped face and 30+ with pasted images only, depending on the machine's load.
+- **Mirror** flips your own view like a selfie camera; what the others see is never mirrored.
+- **Window for OBS** opens the result alone in a window. In OBS, add a *Window Capture* of it, then click **Start Virtual Camera** and pick *OBS Virtual Camera* in Meet, Zoom or Slack.
+- The camera runs in your browser: if Pinokio's window does not offer it, open the studio's address in Chrome or Safari. The live mode is disabled when the studio runs with `--remote` (a shared server).
+
+Only wear the face of someone who agreed to it, and make sure the people you talk to know they are looking at a filter.
+
 Someone was missed in a video? Go to a frame where they appear and tap **This frame**.
 On a large group photo with small faces, lower the **Detection threshold** or pick the **All** detector.
 
@@ -73,6 +85,8 @@ The studio is driven by a local HTTP API (the port is printed at startup, `7870`
 | `POST` | `/api/task/cancel` | Cancels the current task |
 | `GET` | `/api/output/{name}` | Downloads a result |
 | `GET` | `/api/state` | Full state: target, people, library, settings, task |
+| `POST` | `/api/live/start` | `{ "width": 640, "height": 360 }` switches the target to the live camera (people and sources are kept when it already was) |
+| `WS` | `/api/live/stream` | Send JPEG camera frames as binary messages; each one comes back as a JSON text message (`faces` with `box` and `person_id`, `flagged`, `ms`) followed by the processed JPEG |
 
 Texts sent by the server (a task's `stage` and `message`, a refused request's `error`) are translation keys, for example `stage.swap`, or `message.frames` with its values in `message_params`. The English and French texts live in `app/studio/static/i18n.js`.
 

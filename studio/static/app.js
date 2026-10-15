@@ -6,6 +6,22 @@ const el =
 {
 	targetCaption: $('#target-caption'),
 	openTarget: $('#open-target'),
+	startLive: $('#start-live'),
+	dropzoneLive: $('#dropzone-live'),
+	liveOff: $('#live-off'),
+	liveResume: $('#live-resume'),
+	liveOriginal: $('#live-original'),
+	liveResult: $('#live-result'),
+	liveBar: $('#live-bar'),
+	liveState: $('#live-state'),
+	liveFps: $('#live-fps'),
+	liveFlagged: $('#live-flagged'),
+	liveQuality: $('#live-quality'),
+	liveMirror: $('#live-mirror'),
+	livePopout: $('#live-popout'),
+	liveToggle: $('#live-toggle'),
+	liveToggleLabel: $('#live-toggle-label'),
+	liveVideo: $('#live-video'),
 	openTargetLabel: $('#open-target-label'),
 	openSettings: $('#open-settings'),
 	render: $('#render'),
@@ -248,6 +264,11 @@ function isVideo()
 	return Boolean(target() && target().type === 'video');
 }
 
+function isLive()
+{
+	return Boolean(target() && target().type === 'live');
+}
+
 function isBusy()
 {
 	return Boolean(state.session && state.session.task && state.session.task.status === 'running');
@@ -345,12 +366,20 @@ function renderToolbar()
 {
 	const count = assignedCount();
 
-	el.targetCaption.textContent = target() ? target().name + ' · ' + target().width + '×' + target().height : t('app.caption');
+	const liveMode = isLive();
+	const canLive = Boolean(state.options && state.options.live);
+
+	el.targetCaption.textContent = target() ? (liveMode ? t('live.camera_name') : target().name) + ' · ' + target().width + '×' + target().height : t('app.caption');
 	// once a target is loaded the open button says what it really does: replace it
-	el.openTarget.classList.toggle('is-replace', Boolean(target()));
-	el.openTargetLabel.textContent = target() ? t(isVideo() ? 'toolbar.replace_video' : 'toolbar.replace_image') : t('toolbar.open');
-	el.openTarget.title = t(target() ? 'toolbar.replace_title' : 'toolbar.open_title') + ' (' + shortcutLabel('O') + ')';
+	el.openTarget.classList.toggle('is-replace', Boolean(target()) && !liveMode);
+	el.openTargetLabel.textContent = liveMode ? t('toolbar.open_file') : target() ? t(isVideo() ? 'toolbar.replace_video' : 'toolbar.replace_image') : t('toolbar.open');
+	el.openTarget.title = t(target() && !liveMode ? 'toolbar.replace_title' : 'toolbar.open_title') + ' (' + shortcutLabel('O') + ')';
 	el.openTarget.disabled = isBusy();
+	el.startLive.hidden = !canLive || liveMode;
+	el.startLive.disabled = isBusy();
+	el.dropzoneLive.hidden = !canLive;
+	// a camera has nothing to generate, the result is the stream itself
+	el.render.hidden = liveMode;
 	el.renderLabel.textContent = count ? t('toolbar.render_count', { count }) : t('toolbar.render');
 	el.render.disabled = !target() || !count || isBusy();
 }
@@ -372,6 +401,7 @@ function renderViewerChrome()
 	{
 		renderTrim();
 	}
+	renderLive();
 	renderMode();
 	layoutFrame();
 }
@@ -389,7 +419,12 @@ function renderMode()
 	});
 	placeSegmentThumb(el.modeControl, activeButton);
 
-	el.frameResult.hidden = state.mode === 'original';
+	const liveMode = isLive();
+
+	el.frameOriginal.hidden = liveMode;
+	el.frameResult.hidden = liveMode || state.mode === 'original';
+	el.liveOriginal.hidden = !liveMode || state.mode === 'result';
+	el.liveResult.hidden = !liveMode || state.mode === 'original';
 	el.faceLayer.hidden = state.mode !== 'original';
 	renderStickerLayer();
 	el.compareHandle.hidden = state.mode !== 'compare';
@@ -402,6 +437,10 @@ function renderMode()
 	else if (state.armedId)
 	{
 		el.viewerHint.textContent = t('hint.armed');
+	}
+	else if (liveMode && state.mode !== 'original')
+	{
+		el.viewerHint.textContent = assignedCount() ? '' : t('hint.no_source');
 	}
 	else if (state.mode === 'original')
 	{
@@ -442,6 +481,8 @@ function updateCompare()
 	const percent = (state.comparePosition * 100).toFixed(2);
 
 	el.frameResult.style.clipPath = state.mode === 'compare' ? 'inset(0 0 0 ' + percent + '%)' : '';
+	// a mirrored canvas is flipped after clipping, so it hides the other side
+	el.liveResult.style.clipPath = state.mode === 'compare' ? (el.frame.classList.contains('is-mirrored') ? 'inset(0 ' + percent + '% 0 0)' : 'inset(0 0 0 ' + percent + '%)') : '';
 	el.compareHandle.style.left = percent + '%';
 }
 
@@ -480,7 +521,7 @@ function frameUrl(frameNumber)
 
 function showFrame()
 {
-	if (!target())
+	if (!target() || isLive())
 	{
 		return;
 	}
@@ -517,7 +558,7 @@ function goToFrame(frameNumber)
 
 async function fetchFaces()
 {
-	if (!target() || isBusy())
+	if (!target() || isBusy() || isLive())
 	{
 		return;
 	}
@@ -541,7 +582,7 @@ async function fetchFaces()
 
 async function fetchPreview()
 {
-	if (!target() || isBusy())
+	if (!target() || isBusy() || isLive())
 	{
 		return;
 	}
@@ -602,6 +643,12 @@ function invalidatePreview()
 {
 	state.previewDirty = true;
 
+	// the camera stream picks up every change on its next frame
+	if (isLive())
+	{
+		return;
+	}
+
 	if (state.mode !== 'original')
 	{
 		clearTimeout(state.previewTimer);
@@ -651,7 +698,7 @@ function renderFaces()
 function isLiveSticker()
 {
 	const person = people().find(item => item.id === state.adjustPersonId);
-	return state.mode === 'result' && Boolean(person && person.source_kind === 'sticker');
+	return !isLive() && state.mode === 'result' && Boolean(person && person.source_kind === 'sticker');
 }
 
 function renderStickerLayer()
@@ -957,7 +1004,7 @@ function renderPeople()
 	}
 	else if (!list.length)
 	{
-		el.peopleSubtitle.textContent = isVideo() ? t('people.none_video') : t('people.none_image');
+		el.peopleSubtitle.textContent = isLive() ? t('people.none_live') : isVideo() ? t('people.none_video') : t('people.none_image');
 	}
 	else
 	{
@@ -968,7 +1015,7 @@ function renderPeople()
 	{
 		const node = document.createElement('li');
 		const isNew = !state.renderedPersonIds.has(person.id);
-		const appearance = isVideo() ? t('person.seen', { count: person.count }) : t('person.on_photo');
+		const appearance = isVideo() ? t('person.seen', { count: person.count }) : isLive() ? t('person.on_camera') : t('person.on_photo');
 		const name = escapeHtml(t('person.name', { number: index + 1 }));
 
 		renderedIds.add(person.id);
@@ -1616,9 +1663,13 @@ async function openTarget(file)
 		return;
 	}
 	// replacing the target resets the people, so assignments are only dropped on purpose
-	if (assignedCount() && !await confirmDialog(t(isVideo() ? 'replace.title_video' : 'replace.title_image'), t('replace.message', { name: file.name })))
+	if (assignedCount() && !await confirmDialog(t(isLive() ? 'replace.title_live' : isVideo() ? 'replace.title_video' : 'replace.title_image'), t('replace.message', { name: file.name })))
 	{
 		return;
+	}
+	if (live.running || live.stream)
+	{
+		stopLive();
 	}
 	state.importing = true;
 	showHud({ stage: t('import.stage'), message: file.name, progress: 0 }, false);
@@ -1694,6 +1745,327 @@ function confirmDialog(title, message)
 		el.confirm.hidden = false;
 		el.confirmAccept.focus();
 	});
+}
+
+/* ------------------------------------------------------------ live camera */
+
+const live =
+{
+	stream: null,
+	socket: null,
+	running: false,
+	starting: false,
+	inFlight: 0,
+	maxInFlight: 4,
+	details: null,
+	capture: document.createElement('canvas'),
+	width: 0,
+	height: 0,
+	received: [],
+	lastSent: 0,
+	sendScheduled: false,
+	drawing: 0,
+	popup: null,
+	popupCanvas: null,
+	autoScanned: false,
+	mirror: readLiveMirror()
+};
+
+function readLiveMirror()
+{
+	try
+	{
+		return localStorage.getItem('studio-live-mirror') !== '0';
+	}
+	catch (error)
+	{
+		return true;
+	}
+}
+
+async function startLive()
+{
+	if (live.running || live.starting || isBusy() || state.importing)
+	{
+		return;
+	}
+	// switching from a photo or a video resets the people, like opening another file
+	if (target() && !isLive() && assignedCount() && !await confirmDialog(t(isVideo() ? 'replace.title_video' : 'replace.title_image'), t('live.replace_message')))
+	{
+		return;
+	}
+	live.starting = true;
+	renderLive();
+
+	try
+	{
+		live.stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }, audio: false });
+		el.liveVideo.srcObject = live.stream;
+		await el.liveVideo.play();
+	}
+	catch (error)
+	{
+		live.starting = false;
+		stopCamera();
+		renderLive();
+		toast(t('live.camera_denied'), 'error', 7000);
+		return;
+	}
+	// 640 px frames keep the round trip short, the swap only works on the faces anyway
+	const scale = Math.min(1, 640 / el.liveVideo.videoWidth);
+
+	live.width = Math.round(el.liveVideo.videoWidth * scale / 2) * 2;
+	live.height = Math.round(el.liveVideo.videoHeight * scale / 2) * 2;
+	[ live.capture, el.liveOriginal, el.liveResult ].forEach(canvas =>
+	{
+		canvas.width = live.width;
+		canvas.height = live.height;
+	});
+
+	try
+	{
+		const wasLive = isLive();
+		const session = await withDownloadWatch(() => request('POST', '/api/live/start', { width: live.width, height: live.height }));
+
+		if (!wasLive)
+		{
+			state.mode = 'result';
+			state.faces = [];
+			state.renderedPersonIds = new Set();
+			live.autoScanned = false;
+		}
+		setSession(session);
+	}
+	catch (error)
+	{
+		live.starting = false;
+		stopCamera();
+		renderLive();
+		handleError(error);
+		return;
+	}
+	live.running = true;
+	live.starting = false;
+	live.received = [];
+	openLiveSocket();
+	drawLiveOriginal();
+	render();
+}
+
+function openLiveSocket()
+{
+	const socket = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/live/stream');
+
+	socket.binaryType = 'blob';
+	socket.addEventListener('open', () =>
+	{
+		// a few frames in flight keep the engine busy while the previous ones travel back
+		for (let index = 0; index < live.maxInFlight; index++)
+		{
+			setTimeout(sendLiveFrame, index * 35);
+		}
+	});
+	socket.addEventListener('message', event => onLiveMessage(event.data));
+	socket.addEventListener('close', () =>
+	{
+		if (live.running && live.socket === socket)
+		{
+			stopLive();
+			toast(t('live.disconnected'), 'error');
+		}
+	});
+	live.socket = socket;
+	live.inFlight = 0;
+}
+
+function sendLiveFrame()
+{
+	const socket = live.socket;
+
+	if (!live.running || !socket || socket.readyState !== WebSocket.OPEN || live.inFlight >= live.maxInFlight || el.liveVideo.readyState < 2)
+	{
+		return;
+	}
+	// sending faster than the camera would only resend the same picture
+	const wait = 30 - (performance.now() - live.lastSent);
+
+	if (wait > 0)
+	{
+		if (!live.sendScheduled)
+		{
+			live.sendScheduled = true;
+			setTimeout(() =>
+			{
+				live.sendScheduled = false;
+				sendLiveFrame();
+			}, wait);
+		}
+		return;
+	}
+	live.inFlight++;
+	live.lastSent = performance.now();
+	live.capture.getContext('2d').drawImage(el.liveVideo, 0, 0, live.width, live.height);
+	live.capture.toBlob(blob =>
+	{
+		if (blob && live.running && socket.readyState === WebSocket.OPEN)
+		{
+			socket.send(blob);
+		}
+		else
+		{
+			live.inFlight = Math.max(0, live.inFlight - 1);
+		}
+	}, 'image/jpeg', 0.8);
+}
+
+async function onLiveMessage(data)
+{
+	// each result comes as its details, then its picture
+	if (typeof data === 'string')
+	{
+		live.details = JSON.parse(data);
+		return;
+	}
+	const details = live.details || { faces: [], flagged: false };
+	const now = performance.now();
+
+	live.inFlight = Math.max(0, live.inFlight - 1);
+	sendLiveFrame();
+
+	if (!live.running || !data.size)
+	{
+		return;
+	}
+	live.received.push(now);
+
+	while (live.received.length && now - live.received[0] > 1000)
+	{
+		live.received.shift();
+	}
+	const bitmap = await createImageBitmap(data);
+
+	el.liveResult.getContext('2d').drawImage(bitmap, 0, 0, live.width, live.height);
+
+	if (live.popup && !live.popup.closed)
+	{
+		live.popupCanvas.getContext('2d').drawImage(bitmap, 0, 0, live.popupCanvas.width, live.popupCanvas.height);
+	}
+	bitmap.close();
+	state.faces = details.faces;
+	renderFaces();
+	el.liveFlagged.hidden = !details.flagged;
+	el.liveFps.textContent = t('live.fps', { fps: live.received.length });
+
+	// the first faces in front of the camera become the people, like when a photo is opened
+	if (!live.autoScanned && !people().length && details.faces.length && !isBusy())
+	{
+		live.autoScanned = true;
+		scanFrame();
+	}
+}
+
+function drawLiveOriginal()
+{
+	const draw = () =>
+	{
+		if (!live.running)
+		{
+			return;
+		}
+		// the untouched camera is drawn locally, without waiting for the engine
+		if (state.mode !== 'result' && el.liveVideo.readyState >= 2)
+		{
+			el.liveOriginal.getContext('2d').drawImage(el.liveVideo, 0, 0, live.width, live.height);
+		}
+		live.drawing = requestAnimationFrame(draw);
+	};
+
+	cancelAnimationFrame(live.drawing);
+	live.drawing = requestAnimationFrame(draw);
+}
+
+function stopCamera()
+{
+	if (live.stream)
+	{
+		live.stream.getTracks().forEach(track => track.stop());
+	}
+	live.stream = null;
+	el.liveVideo.srcObject = null;
+}
+
+function stopLive()
+{
+	const socket = live.socket;
+
+	live.running = false;
+	live.socket = null;
+	live.inFlight = 0;
+	cancelAnimationFrame(live.drawing);
+
+	if (socket)
+	{
+		socket.close();
+	}
+	stopCamera();
+	state.faces = [];
+	render();
+}
+
+function openLivePopout()
+{
+	const width = 960;
+	const popup = window.open('', 'multiface-live', 'popup=yes,width=' + width + ',height=' + Math.round(width * live.height / Math.max(1, live.width)));
+
+	if (!popup)
+	{
+		toast(t('live.popup_blocked'), 'error', 6000);
+		return;
+	}
+	// the result alone, unmirrored, for OBS to capture and turn into a virtual camera
+	const canvas = popup.document.createElement('canvas');
+
+	popup.document.title = t('live.popout_window');
+	popup.document.body.replaceChildren(canvas);
+	popup.document.body.style.cssText = 'margin:0;height:100vh;background:#000;overflow:hidden';
+	canvas.width = live.width;
+	canvas.height = live.height;
+	canvas.style.cssText = 'display:block;width:100vw;height:100vh;object-fit:contain';
+	live.popup = popup;
+	live.popupCanvas = canvas;
+	popup.focus();
+}
+
+function renderLive()
+{
+	const liveMode = isLive();
+
+	el.liveBar.hidden = !liveMode;
+	el.liveOff.hidden = !liveMode || live.running || live.starting;
+	el.frame.classList.toggle('is-mirrored', liveMode && live.mirror);
+
+	if (!liveMode)
+	{
+		return;
+	}
+	el.liveBar.classList.toggle('is-off', !live.running);
+	el.liveState.textContent = live.running ? t('live.on') : live.starting ? t('live.connecting') : t('live.paused');
+	el.liveToggleLabel.textContent = live.running ? t('live.stop') : t('live.start');
+	el.liveToggle.classList.toggle('is-start', !live.running);
+	el.liveMirror.classList.toggle('is-set', live.mirror);
+	el.livePopout.disabled = !live.running;
+
+	if (!live.running)
+	{
+		el.liveFps.textContent = '';
+		el.liveFlagged.hidden = true;
+	}
+	const quality = (state.session && state.session.settings.live_quality) || 'fluid';
+	const buttons = Array.from(el.liveQuality.querySelectorAll('button'));
+	const activeButton = buttons.find(button => button.dataset.quality === quality);
+
+	buttons.forEach(button => button.classList.toggle('is-active', button === activeButton));
+	requestAnimationFrame(() => placeSegmentThumb(el.liveQuality, activeButton));
 }
 
 /* ------------------------------------------------------------ tasks */
@@ -2262,6 +2634,33 @@ function installEvents()
 			openTarget(file);
 		}
 	});
+	el.startLive.addEventListener('click', startLive);
+	el.dropzoneLive.addEventListener('click', startLive);
+	el.liveResume.addEventListener('click', startLive);
+	el.liveToggle.addEventListener('click', () => live.running ? stopLive() : startLive());
+	el.livePopout.addEventListener('click', openLivePopout);
+	el.liveMirror.addEventListener('click', () =>
+	{
+		live.mirror = !live.mirror;
+
+		try
+		{
+			localStorage.setItem('studio-live-mirror', live.mirror ? '1' : '0');
+		}
+		catch (error)
+		{
+			/* private mode: the choice just won't persist */
+		}
+		renderLive();
+		updateCompare();
+	});
+	el.liveQuality.querySelectorAll('button').forEach(button => button.addEventListener('click', () =>
+	{
+		state.session.settings.live_quality = button.dataset.quality;
+		renderLive();
+		saveSetting('live_quality', button.dataset.quality, false);
+	}));
+	window.addEventListener('beforeunload', stopCamera);
 	el.addSources.addEventListener('click', () => el.sourcesInput.click());
 	el.sourcesInput.addEventListener('change', () =>
 	{

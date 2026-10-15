@@ -5,7 +5,9 @@ Every person found in the target (photo or video) gets its own source face,
 and everything is rendered in a single pass.
 """
 import argparse
+import asyncio
 import base64
+import json
 import os
 import re
 import shutil
@@ -16,9 +18,10 @@ import threading
 import time
 import uuid
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import urlparse
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 STUDIO_PATH = Path(__file__).resolve().parent
 ROOT_PATH = STUDIO_PATH.parent
@@ -43,10 +46,11 @@ sys.argv = [ 'facefusion.py', 'headless-run' ]
 import cv2
 import numpy
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 import facefusion.choices
 import facefusion.execution
@@ -55,8 +59,9 @@ from facefusion.args import apply_args
 from facefusion.audio import create_empty_audio_frame
 from facefusion.core import common_pre_check, conditional_process, processors_pre_check
 from facefusion.face_analyser import get_many_faces
-from facefusion.face_mapper import match_face_mappings
-from facefusion.face_store import clear_static_faces
+from facefusion.face_mapper import create_frame_key, interpolate_face, is_face_bridgeable, match_face_mappings
+from facefusion.face_store import clear_static_faces, get_face_store
+from facefusion.hash_helper import create_hash
 from facefusion.filesystem import is_image, is_video
 from facefusion.processors.core import get_processors_modules
 from facefusion.processors.modules.background_remover import core as background_remover_core
@@ -120,6 +125,8 @@ TASK : Dict[str, Any] =\
 	'cancel': False
 }
 SETTINGS : Dict[str, Any] = {}
+# facefusion's own landmarker threshold, set aside while the camera streams
+LANDMARKER_SCORE = 0.5
 DOWNLOAD : Dict[str, Any] =\
 {
 	'file_name': None,
@@ -154,6 +161,9 @@ def init_engine() -> None:
 	apply_args(args, state_manager.init_item)
 	logger.init('info')
 
+	global LANDMARKER_SCORE
+	LANDMARKER_SCORE = state_manager.get_item('face_landmarker_score')
+
 	state_manager.init_item('face_selector_mode', 'mapping')
 	state_manager.init_item('face_mappings', [])
 	state_manager.init_item('source_paths', [])
@@ -177,6 +187,7 @@ def init_engine() -> None:
 		'face_detector_model': state_manager.get_item('face_detector_model'),
 		'face_detector_score': state_manager.get_item('face_detector_score'),
 		'rotated_faces': True,
+		'live_quality': 'fluid',
 		'output_image_quality': 92,
 		'output_video_quality': 85,
 		'execution_provider': (state_manager.get_item('execution_providers') or [ 'cpu' ])[0]
@@ -213,8 +224,11 @@ def apply_settings() -> None:
 
 	state_manager.set_item('processors', processors)
 	state_manager.set_item('face_selector_mode', 'mapping')
-	state_manager.set_item('face_swapper_model', SETTINGS.get('face_swapper_model'))
-	state_manager.set_item('face_swapper_pixel_boost', SETTINGS.get('face_swapper_pixel_boost'))
+	live = is_live()
+	fluid = live and SETTINGS.get('live_quality') == 'fluid'
+	# the camera needs speed: the fastest swap model unless asked otherwise
+	state_manager.set_item('face_swapper_model', LIVE_FAST_SWAPPER[0] if fluid else SETTINGS.get('face_swapper_model'))
+	state_manager.set_item('face_swapper_pixel_boost', LIVE_FAST_SWAPPER[1] if fluid else SETTINGS.get('face_swapper_pixel_boost'))
 	state_manager.set_item('face_swapper_weight', SETTINGS.get('face_swapper_weight'))
 	state_manager.set_item('face_enhancer_model', SETTINGS.get('face_enhancer_model'))
 	state_manager.set_item('face_enhancer_blend', SETTINGS.get('face_enhancer_blend'))
@@ -225,7 +239,10 @@ def apply_settings() -> None:
 	state_manager.set_item('face_detector_size', facefusion.choices.face_detector_set.get(face_detector_model)[-1])
 	state_manager.set_item('face_detector_score', SETTINGS.get('face_detector_score'))
 	# the detector only knows upright faces, turned copies of the frame catch people lying down or upside down
-	state_manager.set_item('face_detector_angles', [ 0, 90, 270 ] if SETTINGS.get('rotated_faces') else [ 0 ])
+	state_manager.set_item('face_detector_angles', [ 0, 90, 270 ] if SETTINGS.get('rotated_faces') and not live else [ 0 ])
+	# people face their camera upright, and the detector's 5 points align a swap well enough:
+	# the 68 landmarks would triple the analysis time of every camera frame
+	state_manager.set_item('face_landmarker_score', 0 if live else LANDMARKER_SCORE)
 	state_manager.set_item('output_image_quality', SETTINGS.get('output_image_quality'))
 	state_manager.set_item('output_video_quality', SETTINGS.get('output_video_quality'))
 	state_manager.set_item('execution_providers', [ SETTINGS.get('execution_provider') ])
@@ -417,6 +434,8 @@ def read_target_frame(frame_number : int) -> Optional[VisionFrame]:
 	target = SESSION.get('target')
 
 	if target:
+		if target.get('type') == 'live':
+			return LIVE.get('frame').copy() if LIVE.get('frame') is not None else None
 		if target.get('type') == 'image':
 			return read_static_image(target.get('path'))
 		return read_video_frame(target.get('path'), frame_number)
@@ -743,7 +762,8 @@ def get_options() -> Dict[str, Any]:
 		'face_detector_models': facefusion.choices.face_detector_models,
 		'execution_providers': facefusion.execution.get_available_execution_providers(),
 		'platform': sys.platform,
-		'remote': CLI_ARGS.remote
+		'remote': CLI_ARGS.remote,
+		'live': not CLI_ARGS.remote
 	}
 
 
@@ -1199,6 +1219,7 @@ def update_settings(payload : Dict[str, Any]) -> Dict[str, Any]:
 		'face_detector_model': lambda value: value in facefusion.choices.face_detector_models,
 		'face_detector_score': lambda value: 0.05 <= float(value) <= 0.95,
 		'rotated_faces': lambda value: isinstance(value, bool),
+		'live_quality': lambda value: value in [ 'fluid', 'sharp' ],
 		'output_image_quality': lambda value: 10 <= int(value) <= 100,
 		'output_video_quality': lambda value: 10 <= int(value) <= 100,
 		'execution_provider': lambda value: value in facefusion.execution.get_available_execution_providers()
@@ -1219,7 +1240,7 @@ def update_settings(payload : Dict[str, Any]) -> Dict[str, Any]:
 		apply_settings()
 
 		# fetch freshly picked models right away instead of on the first preview
-		if any(key in payload for key in [ 'face_detector_model', 'face_swapper_model', 'face_enhancer', 'face_enhancer_model', 'occlusion' ]) and not ensure_models(collect_wanted_processors()):
+		if any(key in payload for key in [ 'face_detector_model', 'face_swapper_model', 'face_enhancer', 'face_enhancer_model', 'occlusion', 'live_quality' ]) and not ensure_models(collect_wanted_processors()):
 			raise HTTPException(503, 'error.model_download')
 	return serialize_session()
 
@@ -1289,10 +1310,188 @@ def render() -> Dict[str, Any]:
 
 	if not target:
 		raise HTTPException(400, 'error.no_target')
+	if target.get('type') == 'live':
+		raise HTTPException(400, 'error.live_render')
 	if not any(person.get('source_id') for person in SESSION.get('people')):
 		raise HTTPException(400, 'error.no_assignment')
 	start_task('render', run_render)
 	return serialize_session()
+
+
+# ---------------------------------------------------------------- live camera
+
+LIVE : Dict[str, Any] =\
+{
+	'frame': None,
+	'faces': {},
+	'seen': {},
+	'flagged': False,
+	'checked_at': 0.0,
+	'checking': False
+}
+# weight of the newest detection, and how long a person keeps their smoothed face without one
+LIVE_SMOOTHING = 0.6
+LIVE_MEMORY = 0.4
+LIVE_CONTENT_INTERVAL = 2.0
+# several camera frames are processed at once, the swap model runs them side by side
+LIVE_WORKERS = ThreadPoolExecutor(max_workers = 4, thread_name_prefix = 'live')
+LIVE_CONTENT_WORKER = ThreadPoolExecutor(max_workers = 1, thread_name_prefix = 'live-content')
+LIVE_FAST_SWAPPER = ('inswapper_128_fp16', '128x128')
+
+
+class LivePayload(BaseModel):
+	width : int
+	height : int
+
+
+def is_live() -> bool:
+	target = SESSION.get('target')
+	return bool(target and target.get('type') == 'live')
+
+
+@app.post('/api/live/start')
+def start_live(payload : LivePayload) -> Dict[str, Any]:
+	ensure_idle()
+
+	# a shared server would stream every visitor's camera into one session
+	if CLI_ARGS.remote:
+		raise HTTPException(404, 'error.live_unavailable')
+
+	with ENGINE_LOCK:
+		# a camera restarted after a pause keeps its people and their sources
+		if not is_live():
+			SESSION.update({ 'target': { 'id': uuid.uuid4().hex[:8], 'type': 'live', 'name': 'camera', 'path': None, 'frame_total': 1, 'fps': None }, 'people': [], 'trim': [ None, None ], 'output': None })
+		SESSION.get('target').update({ 'width': max(16, payload.width), 'height': max(16, payload.height) })
+		LIVE.update({ 'frame': None, 'faces': {}, 'seen': {}, 'flagged': False, 'checked_at': 0.0 })
+		clear_static_faces()
+		apply_settings()
+
+		if not ensure_models(collect_wanted_processors()):
+			raise HTTPException(503, 'error.model_download')
+	return serialize_session()
+
+
+@app.websocket('/api/live/stream')
+async def live_stream(websocket : WebSocket) -> None:
+	await websocket.accept()
+	loop = asyncio.get_running_loop()
+	results : asyncio.Queue = asyncio.Queue()
+
+	# frames are processed side by side but always sent back in the order they came
+	async def send_results() -> None:
+		while True:
+			details, frame_bytes = await (await results.get())
+			await websocket.send_text(json.dumps(details))
+			await websocket.send_bytes(frame_bytes)
+
+	sender = asyncio.create_task(send_results())
+
+	try:
+		while True:
+			camera_bytes = await websocket.receive_bytes()
+			await results.put(loop.run_in_executor(LIVE_WORKERS, process_live_bytes, camera_bytes))
+	except WebSocketDisconnect:
+		pass
+	finally:
+		sender.cancel()
+
+
+def process_live_bytes(camera_bytes : bytes) -> Tuple[Dict[str, Any], bytes]:
+	vision_frame = cv2.imdecode(numpy.frombuffer(camera_bytes, numpy.uint8), cv2.IMREAD_COLOR)
+
+	if vision_frame is None:
+		return { 'faces': [], 'flagged': False }, b''
+	output_frame, faces = vision_frame, []
+
+	started = time.perf_counter()
+
+	if is_live() and TASK.get('status') != 'running':
+		LIVE['frame'] = vision_frame
+		output_frame, faces = process_live_frame(vision_frame)
+	_, buffer = cv2.imencode('.jpg', output_frame, [ cv2.IMWRITE_JPEG_QUALITY, 85 ])
+	return { 'faces': faces, 'flagged': bool(LIVE.get('flagged')), 'ms': round((time.perf_counter() - started) * 1000) }, buffer.tobytes()
+
+
+def check_live_content() -> None:
+	try:
+		if LIVE.get('frame') is not None:
+			LIVE['flagged'] = content_analyser.analyse_frame(LIVE.get('frame'))
+	finally:
+		LIVE['checking'] = False
+
+
+def process_live_frame(vision_frame : VisionFrame) -> Tuple[VisionFrame, List[Dict[str, Any]]]:
+	height, width = vision_frame.shape[:2]
+	now = time.monotonic()
+	people = SESSION.get('people')
+	face_mappings = face_mapper.get_face_mappings()
+	mapping_indexes = { id(face_mapping): index for index, face_mapping in enumerate(face_mappings) }
+	target_faces = get_many_faces([ vision_frame ])
+	pairs = []
+	person_ids = {}
+	matched_ids = set()
+
+	for face, face_mapping in match_face_mappings(target_faces, face_mappings, SETTINGS.get('reference_face_distance')):
+		index = mapping_indexes.get(id(face_mapping))
+		person_id = people[index].get('id') if index is not None and index < len(people) else None
+		previous_face = LIVE.get('faces').get(person_id)
+		matched_ids.add(id(face))
+
+		# light smoothing against the detector jitter, dropped as soon as the head really moves
+		if previous_face is not None and now - LIVE.get('seen').get(person_id, 0) < LIVE_MEMORY and is_face_bridgeable(previous_face, face):
+			face = interpolate_face(previous_face, face, LIVE_SMOOTHING)
+		LIVE['faces'][person_id] = face
+		LIVE['seen'][person_id] = now
+		person_ids[id(face)] = person_id
+		pairs.append((face, face_mapping))
+
+	# the content check is slow, it runs aside every few seconds instead of stalling the stream
+	if now - LIVE.get('checked_at') > LIVE_CONTENT_INTERVAL and not LIVE.get('checking'):
+		LIVE.update({ 'checking': True, 'checked_at': now })
+		LIVE_CONTENT_WORKER.submit(check_live_content)
+	temp_vision_frame = vision_frame.copy()
+
+	if LIVE.get('flagged'):
+		temp_vision_frame = obscure_frame(temp_vision_frame)
+	elif pairs:
+		# the processors look the faces up by frame, so they all get these matched and smoothed ones
+		frame_key = create_frame_key(vision_frame)
+		face_mapper.FACE_TRACK_SET[frame_key] = pairs
+		temp_vision_mask = extract_vision_mask(temp_vision_frame)
+
+		try:
+			for processor_module in get_processors_modules(state_manager.get_item('processors')):
+				logger.disable()
+				ready = processor_module.pre_process('stream')
+				logger.enable()
+
+				if ready:
+					temp_vision_frame, temp_vision_mask = processor_module.process_frame(
+					{
+						'reference_vision_frame': vision_frame,
+						'source_audio_frame': create_empty_audio_frame(),
+						'source_voice_frame': create_empty_audio_frame(),
+						'source_vision_frames': [],
+						'target_vision_frame': vision_frame,
+						'temp_vision_frame': temp_vision_frame,
+						'temp_vision_mask': temp_vision_mask
+					})
+			temp_vision_frame = merge_vision_mask(temp_vision_frame, temp_vision_mask)[:, :, :3]
+		finally:
+			face_mapper.FACE_TRACK_SET.pop(frame_key, None)
+
+	# every camera frame is new: only its own entry leaves the detection cache, the sources stay cached
+	get_face_store().get('static_faces').pop(create_hash(vision_frame.tobytes()), None)
+	overlay_faces = [ face for face, _ in pairs ] + [ face for face in target_faces if id(face) not in matched_ids ]
+	faces =\
+	[
+		{
+			'box': [ float(face.bounding_box[0] / width), float(face.bounding_box[1] / height), float(face.bounding_box[2] / width), float(face.bounding_box[3] / height) ],
+			'person_id': person_ids.get(id(face))
+		}
+		for face in overlay_faces
+	]
+	return temp_vision_frame, faces
 
 
 @app.get('/api/task')
