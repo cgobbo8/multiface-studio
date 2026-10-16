@@ -7,3 +7,17 @@ __pycache__
 .vscode
 .env
 workspace
+
+# created by Pinokio in every install
+logs
+cache
+ENVIRONMENT
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+QWEN.md
+.geminiignore
+.clinerules
+.cursorrules
+.windsurfrules
+.DS_Store
