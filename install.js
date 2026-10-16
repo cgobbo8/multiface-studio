@@ -38,33 +38,18 @@ module.exports = async kernel =>
 		run:
 		[
 			{
-				when: '{{!exists("app/engine")}}',
+				when: '{{platform !== "win32" && ' + fs.existsSync(OFFICIAL_ASSETS_PATH) + ' && !exists(".assets")}}',
 				method: 'shell.run',
 				params:
 				{
-					path: 'app',
-					message:
-					[
-						'git clone https://github.com/facefusion/facefusion --branch 3.5.4 --single-branch engine',
-						'git -C engine apply ../patches/facefusion-3.5.4-multi-face.patch'
-					]
-				}
-			},
-			{
-				when: '{{platform !== "win32" && ' + fs.existsSync(OFFICIAL_ASSETS_PATH) + ' && !exists("app/engine/.assets")}}',
-				method: 'shell.run',
-				params:
-				{
-					path: 'app/engine',
 					message: 'ln -s "' + OFFICIAL_ASSETS_PATH + '" .assets'
 				}
 			},
 			{
-				when: '{{platform === "win32" && ' + fs.existsSync(OFFICIAL_ASSETS_PATH) + ' && !exists("app/engine/.assets")}}',
+				when: '{{platform === "win32" && ' + fs.existsSync(OFFICIAL_ASSETS_PATH) + ' && !exists(".assets")}}',
 				method: 'shell.run',
 				params:
 				{
-					path: 'app/engine',
 					message: 'mklink /J .assets "' + OFFICIAL_ASSETS_PATH + '"'
 				}
 			},
@@ -130,7 +115,6 @@ module.exports = async kernel =>
 				params:
 				{
 					message: install(kernel),
-					path: 'app/engine',
 					conda:
 					{
 						path: path.resolve(__dirname, '.env')

@@ -6,7 +6,7 @@ FaceFusion swaps one face at a time: with 20 people in a shot, you have to run 2
 MultiFace Studio detects everyone, lets you drop a source face next to each person, then renders everything at once.
 The interface comes in English and French (**Settings → Appearance → Language**) and takes its cues from Apple (frosted glass, automatic light/dark theme).
 
-The engine is [FaceFusion 3.5.4](https://github.com/facefusion/facefusion) with a small patch (`app/patches/`).
+This repository is a **fork of [FaceFusion](https://github.com/facefusion/facefusion)**, based on its 3.5.4 release: the multi-face engine changes are commits on top of it ([see the difference](https://github.com/facefusion/facefusion/compare/3.5.4...cgobbo8:multiface-studio:main)), the studio lives in `studio/` and the Pinokio launcher scripts at the root.
 
 > **Unofficial** community project, not affiliated with the FaceFusion team.
 
@@ -28,14 +28,14 @@ The engine is [FaceFusion 3.5.4](https://github.com/facefusion/facefusion) with 
 ## Installation (Pinokio)
 
 1. In Pinokio, **Download from URL** → paste `https://github.com/cgobbo8/multiface-studio`.
-2. Click **Install**. The script clones FaceFusion 3.5.4, applies the patch and creates a conda environment (Python 3.12, ffmpeg, onnxruntime matching your GPU).
+2. Click **Install**. The script creates a conda environment (Python 3.12, ffmpeg, onnxruntime matching your GPU) and installs FaceFusion's dependencies.
 3. Click **Start**, then **Open Web UI**.
 
 If the official FaceFusion launcher is already installed in Pinokio (`api/facefusion-pinokio.git`), its models are reused through a link: nothing is downloaded again.
 Otherwise the base models (~1 GB) are downloaded on the first start, with their progress shown in the studio.
 
-- **Update**: pulls the latest launcher and applies the patch again.
-- **Reset**: removes the engine and the environment. Models shared with the official launcher are left alone.
+- **Update**: pulls the latest version (engine and studio together).
+- **Reset**: removes the environment. Your files in `workspace/` and the models shared with the official launcher are left alone.
 
 ## Usage
 
@@ -47,7 +47,7 @@ Otherwise the base models (~1 GB) are downloaded on the first start, with their 
    - or tap it, then tap the person (in the list or right on the frame).
    - For an image, tap the **Adjust** button (sliders icon) on the person: size, position, rotation, 3D effect, mirror and shape (whole, round, cut out). The **Preview** tab opens and the image updates live.
 4. Check the result with **Preview** or **Compare**.
-5. **Generate**. The result is saved in `app/workspace/outputs/`.
+5. **Generate**. The result is saved in `workspace/outputs/`.
 
 To keep only part of a video, drag the handles of the filmstrip under the video, or go to a frame and press **I** (start) or **O** (end).
 ### Live camera
@@ -88,7 +88,7 @@ The studio is driven by a local HTTP API (the port is printed at startup, `7870`
 | `POST` | `/api/live/start` | `{ "width": 640, "height": 360 }` switches the target to the live camera (people and sources are kept when it already was) |
 | `WS` | `/api/live/stream` | Send JPEG camera frames as binary messages; each one comes back as a JSON text message (`faces` with `box` and `person_id`, `flagged`, `ms`) followed by the processed JPEG |
 
-Texts sent by the server (a task's `stage` and `message`, a refused request's `error`) are translation keys, for example `stage.swap`, or `message.frames` with its values in `message_params`. The English and French texts live in `app/studio/static/i18n.js`.
+Texts sent by the server (a task's `stage` and `message`, a refused request's `error`) are translation keys, for example `stage.swap`, or `message.frames` with its values in `message_params`. The English and French texts live in `studio/static/i18n.js`.
 
 ### curl
 
@@ -155,7 +155,10 @@ async function render(targetFile, sourceFiles)
 }
 ```
 
-## What the engine patch changes
+## What this fork changes in FaceFusion
+
+Everything below sits in `facefusion/`, as commits on top of the 3.5.4 release:
+
 
 - `facefusion/face_mapper.py` (new): matches each detected face with the closest person, one-to-one.
 - `face_selector.py`: internal `mapping` selector mode.
@@ -170,7 +173,7 @@ async function render(targetFile, sourceFiles)
 
 See [LICENSE.md](LICENSE.md).
 
-- FaceFusion is distributed under the **OpenRAIL-AS** license (© Henry Ruhs). The patch modifies FaceFusion and follows this license, including its use-based restrictions.
+- FaceFusion is distributed under the **OpenRAIL-AS** license (© Henry Ruhs). This fork and its changes (© 2026 Corentin Gobbo) follow the same license, including its use-based restrictions.
 - Models are not included: FaceFusion downloads them from its own servers, each under its own license (several are **non-commercial**, for example InSwapper, SimSwap and BlendSwap).
 - FaceFusion's content analyser (NSFW) stays active.
 - Only use the faces of people who gave their consent, and never present a result as authentic.

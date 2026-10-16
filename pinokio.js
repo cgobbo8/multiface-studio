@@ -6,7 +6,7 @@ module.exports =
 	icon: 'icon.png',
 	menu: async (kernel, info) =>
 	{
-		const installed = info.exists('.env') && info.exists('app/engine');
+		const installed = info.exists('.env');
 		const running =
 		{
 			install: info.running('install.js'),

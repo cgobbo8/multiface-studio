@@ -25,7 +25,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 STUDIO_PATH = Path(__file__).resolve().parent
 ROOT_PATH = STUDIO_PATH.parent
-ENGINE_PATH = ROOT_PATH / 'engine'
+# a checkout of the fork has the engine at its root, the development copy keeps it next to the studio
+ENGINE_PATH = ROOT_PATH if (ROOT_PATH / 'facefusion').is_dir() else ROOT_PATH / 'engine'
 WORKSPACE_PATH = ROOT_PATH / 'workspace'
 UPLOAD_PATH = WORKSPACE_PATH / 'uploads'
 OUTPUT_PATH = WORKSPACE_PATH / 'outputs'

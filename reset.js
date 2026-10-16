@@ -10,7 +10,7 @@ module.exports =
 			method: 'shell.run',
 			params:
 			{
-				message: 'if [ -L app/engine/.assets ]; then rm app/engine/.assets; fi'
+				message: 'if [ -L .assets ]; then rm .assets; fi'
 			}
 		},
 		{
@@ -18,14 +18,7 @@ module.exports =
 			method: 'shell.run',
 			params:
 			{
-				message: 'if exist app\\engine\\.assets rmdir app\\engine\\.assets'
-			}
-		},
-		{
-			method: 'fs.rm',
-			params:
-			{
-				path: 'app/engine'
+				message: 'if exist .assets rmdir .assets'
 			}
 		},
 		{

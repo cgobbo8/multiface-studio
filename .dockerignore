@@ -1,5 +1,9 @@
-# the image only needs the studio and the engine patch, the engine itself is cloned during the build
+# the image needs the engine and the studio, not the launcher, the models nor anyone's files
 *
-!app/patches
-!app/studio
-app/studio/**/__pycache__
+!facefusion
+!facefusion.py
+!facefusion.ini
+!install.py
+!requirements.txt
+!studio
+**/__pycache__

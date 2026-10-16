@@ -9,7 +9,6 @@ module.exports =
 			method: 'shell.run',
 			params:
 			{
-				path: 'app',
 				conda:
 				{
 					path: path.resolve(__dirname, '.env')
