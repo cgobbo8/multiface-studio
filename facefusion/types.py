@@ -61,7 +61,8 @@ FaceMapping = TypedDict('FaceMapping',
 	'reference_embeddings' : List[Embedding],
 	'source_paths' : List[str],
 	'sticker_path' : Optional[str],
-	'sticker_options' : Optional[FaceStickerOptions]
+	'sticker_options' : Optional[FaceStickerOptions],
+	'filters' : List[str]
 })
 FaceStore = TypedDict('FaceStore',
 {

@@ -29,6 +29,8 @@ const el =
 	renderLabel: $('#render-label'),
 	modeControl: $('#mode-control'),
 	viewerHint: $('#viewer-hint'),
+	stylePicker: $('#style-picker'),
+	frameFilter: $('#frame-filter'),
 	canvas: $('#canvas'),
 	dropzone: $('#dropzone'),
 	pickTarget: $('#pick-target'),
@@ -130,6 +132,8 @@ const state =
 	importing: false,
 	libraryKind: 'face',
 	adjustPersonId: null,
+	filterPersonId: null,
+	styleKey: null,
 	stickerTimers: {},
 	offline: false,
 	reconnectTimer: null,
@@ -143,7 +147,8 @@ const ICONS =
 	plus: '<svg viewBox="0 0 24 24"><path d="M12 6v12M6 12h12"/></svg>',
 	close: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
 	chevron: '<svg class="person-arrow" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>',
-	sliders: '<svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>'
+	sliders: '<svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>',
+	wand: '<svg viewBox="0 0 24 24"><path d="M4 20l11-11M13.5 7.5l3 3"/><path d="M17 3v3M15.5 4.5h3M20.5 9v2.5M19.25 10.25h2.5M9 3.5v2M8 4.5h2"/></svg>'
 };
 
 const LIBRARY_KINDS =
@@ -277,7 +282,12 @@ function isBusy()
 
 function assignedCount()
 {
-	return people().filter(person => person.source_id).length;
+	return people().filter(person => person.source_id || person.filters.length).length;
+}
+
+function frameFilter()
+{
+	return state.session ? state.session.settings.frame_filter : null;
 }
 
 function personIndex(personId)
@@ -356,6 +366,7 @@ function setSession(session)
 function render()
 {
 	renderToolbar();
+	renderStylePicker();
 	renderViewerChrome();
 	renderPeople();
 	renderLibrary();
@@ -382,7 +393,7 @@ function renderToolbar()
 	// a camera has nothing to generate, the result is the stream itself
 	el.render.hidden = liveMode;
 	el.renderLabel.textContent = count ? t('toolbar.render_count', { count }) : t('toolbar.render');
-	el.render.disabled = !target() || !count || isBusy();
+	el.render.disabled = !target() || !(count || frameFilter()) || isBusy();
 }
 
 /* ------------------------------------------------------------ viewer */
@@ -441,13 +452,13 @@ function renderMode()
 	}
 	else if (liveMode && state.mode !== 'original')
 	{
-		el.viewerHint.textContent = assignedCount() ? '' : t('hint.no_source');
+		el.viewerHint.textContent = assignedCount() || frameFilter() ? '' : t('hint.no_source');
 	}
 	else if (state.mode === 'original')
 	{
 		el.viewerHint.textContent = people().length ? t('hint.original') : '';
 	}
-	else if (!assignedCount())
+	else if (!assignedCount() && !frameFilter())
 	{
 		el.viewerHint.textContent = t('hint.no_source');
 	}
@@ -1036,6 +1047,7 @@ function renderPeople()
 			'</button>' +
 			'<div class="person-meta"><strong>' + name + '</strong><span>' + escapeHtml(appearance + ' · ' + describePerson(person)) + '</span></div>' +
 			'<div class="person-actions">' +
+				'<button class="icon-button person-adjust person-filters' + (state.filterPersonId === person.id ? ' is-active' : '') + (person.filters.length ? ' has-filters' : '') + '" title="' + escapeHtml(t('person.filters')) + '">' + ICONS.wand + (person.filters.length ? '<span class="filter-count">' + person.filters.length + '</span>' : '') + '</button>' +
 				(person.source_kind === 'sticker' ? '<button class="icon-button person-adjust' + (state.adjustPersonId === person.id ? ' is-active' : '') + '" title="' + escapeHtml(t('person.adjust')) + '">' + ICONS.sliders + '</button>' : '') +
 				'<button class="icon-button person-remove" title="' + escapeHtml(t('person.remove')) + '">' + ICONS.close + '</button>' +
 			'</div>';
@@ -1043,6 +1055,10 @@ function renderPeople()
 		if (person.source_kind === 'sticker' && state.adjustPersonId === person.id)
 		{
 			node.appendChild(buildAdjustPanel(person));
+		}
+		if (state.filterPersonId === person.id)
+		{
+			node.appendChild(buildFilterPanel(person));
 		}
 
 		const targetButton = node.querySelector('.person-target');
@@ -1079,10 +1095,11 @@ function renderPeople()
 		});
 		node.querySelector('.person-remove').addEventListener('click', () => removePerson(person.id));
 
-		if (node.querySelector('.person-adjust'))
+		if (node.querySelector('.person-adjust:not(.person-filters)'))
 		{
-			node.querySelector('.person-adjust').addEventListener('click', () => toggleAdjust(person));
+			node.querySelector('.person-adjust:not(.person-filters)').addEventListener('click', () => toggleAdjust(person));
 		}
+		node.querySelector('.person-filters').addEventListener('click', () => toggleFilters(person));
 		node.addEventListener('mouseenter', () => setHoverPerson(person.id));
 		node.addEventListener('mouseleave', () => setHoverPerson(null));
 		fragment.appendChild(node);
@@ -1096,11 +1113,17 @@ function renderPeople()
 
 function describePerson(person)
 {
+	const filtered = person.filters.length ? tc('person.filtered', person.filters.length) : '';
+
 	if (person.source_kind === 'sticker')
 	{
-		return t('person.sticker');
+		return t('person.sticker') + (filtered && ' · ' + filtered);
 	}
-	return person.source_id ? t('person.swapped') : t('person.kept');
+	if (person.source_id)
+	{
+		return t('person.swapped') + (filtered && ' · ' + filtered);
+	}
+	return filtered || t('person.kept');
 }
 
 function toggleAdjust(person)
@@ -1289,6 +1312,126 @@ function saveSticker(person, immediate)
 			resolve();
 		}, immediate ? 0 : 250);
 	});
+}
+
+/* ------------------------------------------------------------ filters */
+
+const FILTER_GROUPS = [ 'shape', 'hair', 'skin', 'prop' ];
+
+// the colour chips show their colour
+const FILTER_SWATCHES =
+{
+	hair_pink: '#ff46aa',
+	hair_blue: '#2878ff',
+	hair_green: '#32d25a',
+	hair_red: '#eb2d23',
+	hair_platinum: '#f0e8d4',
+	hair_rainbow: 'linear-gradient(90deg, #ff3b30, #ffcc00, #34c759, #0a84ff, #bf5af2)',
+	skin_green: '#78af3c',
+	skin_blue: '#4682dc',
+	skin_yellow: '#ffd228',
+	skin_red: '#cd2d28'
+};
+
+function toggleFilters(person)
+{
+	state.filterPersonId = state.filterPersonId === person.id ? null : person.id;
+	renderPeople();
+
+	// filters only show on the result
+	if (state.filterPersonId && state.mode === 'original')
+	{
+		setMode('result');
+	}
+}
+
+function buildFilterPanel(person)
+{
+	const panel = document.createElement('div');
+	const filters = (state.options && state.options.face_filters) || [];
+	const multipleGroups = (state.options && state.options.face_filter_multiple_groups) || [];
+	const groupOf = value => (filters.find(filter => filter.value === value) || {}).group;
+
+	panel.className = 'adjust filters';
+	FILTER_GROUPS.forEach(group =>
+	{
+		const row = document.createElement('div');
+		const chips = document.createElement('div');
+
+		row.className = 'filters-group';
+		row.innerHTML = '<span>' + escapeHtml(t('filters.' + group)) + '</span>';
+		chips.className = 'filters-chips';
+		filters.filter(filter => filter.group === group).forEach(filter =>
+		{
+			const chip = document.createElement('button');
+			const swatch = FILTER_SWATCHES[filter.value];
+
+			chip.className = 'chip' + (person.filters.includes(filter.value) ? ' is-set' : '');
+			chip.innerHTML = (swatch ? '<span class="swatch" style="background:' + swatch + '"></span>' : '') + escapeHtml(t('filter.' + filter.value));
+
+			if (hasTranslation('filter.' + filter.value + '_title'))
+			{
+				chip.title = t('filter.' + filter.value + '_title');
+			}
+			chip.addEventListener('click', () =>
+			{
+				const isSet = person.filters.includes(filter.value);
+				// one filter per group, the props add up
+				const keptFilters = person.filters.filter(value => value !== filter.value && (multipleGroups.includes(group) || groupOf(value) !== group));
+
+				saveFilters(person, isSet ? keptFilters : keptFilters.concat(filter.value));
+			});
+			chips.appendChild(chip);
+		});
+		row.appendChild(chips);
+		panel.appendChild(row);
+	});
+
+	const footer = document.createElement('div');
+
+	footer.className = 'adjust-toggles';
+	footer.innerHTML = isLive() ? '<p class="filters-hint">' + escapeHtml(t('filters.live_hint')) + '</p>' : '';
+
+	if (person.filters.length)
+	{
+		const clear = document.createElement('button');
+
+		clear.className = 'link-button';
+		clear.textContent = t('filters.clear');
+		clear.addEventListener('click', () => saveFilters(person, []));
+		footer.appendChild(clear);
+	}
+	panel.appendChild(footer);
+	return panel;
+}
+
+async function saveFilters(person, filters)
+{
+	try
+	{
+		setSession(await withDownloadWatch(() => request('POST', '/api/people/' + person.id + '/filters', { filters })));
+		invalidatePreview();
+	}
+	catch (error)
+	{
+		handleError(error);
+	}
+}
+
+function renderStylePicker()
+{
+	const styles = (state.options && state.options.frame_filters) || [];
+	const current = frameFilter() || '';
+	const key = LANGUAGE + '\n' + styles.join('\n') + '\n' + current;
+
+	// rebuilt only when something changed, an open menu must not lose its options
+	if (key !== state.styleKey)
+	{
+		state.styleKey = key;
+		el.frameFilter.replaceChildren(new Option(t('style.none'), '', false, !current), ...styles.map(style => new Option(t('style.' + style), style, false, style === current)));
+	}
+	el.stylePicker.hidden = !target() || !styles.length;
+	el.stylePicker.classList.toggle('is-set', Boolean(current));
 }
 
 async function assignSource(personId, sourceId)
@@ -2666,6 +2809,18 @@ function installEvents()
 		writeLiveSetting('studio-live-mirror', live.mirror ? '1' : '0');
 		renderLive();
 		updateCompare();
+	});
+	el.frameFilter.addEventListener('change', () =>
+	{
+		state.session.settings.frame_filter = el.frameFilter.value || null;
+		renderToolbar();
+		renderStylePicker();
+		saveSetting('frame_filter', el.frameFilter.value || null);
+
+		if (state.mode === 'original')
+		{
+			setMode('result');
+		}
 	});
 	el.liveQuality.querySelectorAll('button').forEach(button => button.addEventListener('click', () =>
 	{

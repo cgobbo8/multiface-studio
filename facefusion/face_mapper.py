@@ -33,6 +33,14 @@ def has_face_mapping_sticker() -> bool:
 	return any(face_mapping.get('sticker_path') for face_mapping in get_face_mappings())
 
 
+def has_face_mapping_filter() -> bool:
+	return any(face_mapping.get('filters') for face_mapping in get_face_mappings())
+
+
+def is_face_mapping_used(face_mapping : FaceMapping) -> bool:
+	return bool(face_mapping.get('source_paths') or face_mapping.get('sticker_path') or face_mapping.get('filters'))
+
+
 def calculate_face_mapping_distance(face : Face, face_mapping : FaceMapping) -> float:
 	face_distances = [ 1 - numpy.dot(face.embedding_norm, reference_embedding) for reference_embedding in face_mapping.get('reference_embeddings') ]
 
@@ -72,6 +80,10 @@ def select_sticker_faces(target_vision_frame : VisionFrame) -> List[Tuple[Face, 
 	return [ (target_face, face_mapping) for target_face, face_mapping in match_target_faces(target_vision_frame) if face_mapping.get('sticker_path') ]
 
 
+def select_filter_faces(target_vision_frame : VisionFrame) -> List[Tuple[Face, FaceMapping]]:
+	return [ (target_face, face_mapping) for target_face, face_mapping in match_target_faces(target_vision_frame) if face_mapping.get('filters') ]
+
+
 def match_target_faces(target_vision_frame : VisionFrame) -> List[Tuple[Face, FaceMapping]]:
 	# inside a prepared video the tracked faces win, they include the bridged misses
 	if FACE_TRACK_SET:
@@ -80,7 +92,7 @@ def match_target_faces(target_vision_frame : VisionFrame) -> List[Tuple[Face, Fa
 		if tracked_pairs is not None:
 			return tracked_pairs
 
-	# every mapping takes part so swapped, stickered and untouched people never steal each other's faces
+	# every mapping takes part so swapped, stickered, filtered and untouched people never steal each other's faces
 	target_faces = get_many_faces([ target_vision_frame ])
 	return match_face_mappings(target_faces, get_face_mappings(), state_manager.get_item('reference_face_distance'))
 
@@ -110,7 +122,7 @@ def prepare_face_tracks(temp_frame_paths : List[str]) -> None:
 	clear_face_tracks()
 	FACE_TRACK_TOKEN.append(track_token)
 	face_mappings = get_face_mappings()
-	track_indices = [ index for index, face_mapping in enumerate(face_mappings) if face_mapping.get('source_paths') or face_mapping.get('sticker_path') ]
+	track_indices = [ index for index, face_mapping in enumerate(face_mappings) if is_face_mapping_used(face_mapping) ]
 
 	if not track_indices:
 		return

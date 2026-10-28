@@ -74,9 +74,11 @@ from facefusion.processors.core import get_processors_modules
 from facefusion.processors.modules.background_remover import core as background_remover_core
 from facefusion.processors.modules.face_enhancer import choices as face_enhancer_choices
 from facefusion.processors.modules.face_enhancer import core as face_enhancer_core
+from facefusion.processors.modules.face_filter import core as face_filter_core
 from facefusion.processors.modules.face_swapper import choices as face_swapper_choices
 from facefusion.processors.modules.face_sticker import core as face_sticker_core
 from facefusion.processors.modules.face_swapper import core as face_swapper_core
+from facefusion.processors.modules.frame_filter import core as frame_filter_core
 from facefusion.program import create_program
 from facefusion.temp_helper import resolve_temp_frame_paths
 from facefusion.types import Face, FaceMapping, Mask, VisionFrame
@@ -195,6 +197,7 @@ def init_engine() -> None:
 		'face_detector_score': state_manager.get_item('face_detector_score'),
 		'rotated_faces': True,
 		'live_quality': 'fluid',
+		'frame_filter': None,
 		'output_image_quality': 92,
 		'output_video_quality': 85,
 		'execution_provider': (state_manager.get_item('execution_providers') or [ 'cpu' ])[0]
@@ -218,9 +221,13 @@ def apply_settings() -> None:
 		processors.append('face_swapper')
 	if SETTINGS.get('face_enhancer'):
 		processors.append('face_enhancer')
-	# stickers go last so no other processor paints over them
+	if any(face_mapping.get('filters') for face_mapping in face_mappings):
+		processors.append('face_filter')
+	# stickers go after the faces so no other processor paints over them, the style of the whole image comes last
 	if any(face_mapping.get('sticker_path') for face_mapping in face_mappings):
 		processors.append('face_sticker')
+	if SETTINGS.get('frame_filter'):
+		processors.append('frame_filter')
 
 	face_mask_types = [ 'box' ]
 
@@ -250,6 +257,7 @@ def apply_settings() -> None:
 	# people face their camera upright, and the detector's 5 points align a swap well enough:
 	# the 68 landmarks would triple the analysis time of every camera frame
 	state_manager.set_item('face_landmarker_score', 0 if live else LANDMARKER_SCORE)
+	state_manager.set_item('frame_filter', SETTINGS.get('frame_filter'))
 	state_manager.set_item('output_image_quality', SETTINGS.get('output_image_quality'))
 	state_manager.set_item('output_video_quality', SETTINGS.get('output_video_quality'))
 	state_manager.set_item('execution_providers', [ SETTINGS.get('execution_provider') ])
@@ -297,7 +305,8 @@ def build_face_mappings() -> List[FaceMapping]:
 			'reference_embeddings': person.get('embeddings'),
 			'source_paths': [ source.get('path') ] if source and not is_sticker else [],
 			'sticker_path': resolve_sticker_path(source, person.get('sticker')) if is_sticker else None,
-			'sticker_options': dict(person.get('sticker'), round = False) if is_sticker else None
+			'sticker_options': dict(person.get('sticker'), round = False) if is_sticker else None,
+			'filters': list(person.get('filters') or [])
 		})
 	return face_mappings
 
@@ -467,7 +476,8 @@ def serialize_session() -> Dict[str, Any]:
 			'source_thumbnail': source.get('thumbnail') if source else None,
 			'sticker': person.get('sticker') if is_sticker else None,
 			'sticker_image': '/api/library/' + source.get('id') + '/image?variant=' + resolve_sticker_variant(source, person.get('sticker')) if is_sticker else None,
-			'sticker_size': [ source.get('width'), source.get('height') ] if is_sticker else None
+			'sticker_size': [ source.get('width'), source.get('height') ] if is_sticker else None,
+			'filters': person.get('filters') or []
 		})
 
 	return\
@@ -771,7 +781,10 @@ def get_options() -> Dict[str, Any]:
 		'execution_providers': facefusion.execution.get_available_execution_providers(),
 		'platform': sys.platform,
 		'remote': CLI_ARGS.remote,
-		'live': not CLI_ARGS.remote
+		'live': not CLI_ARGS.remote,
+		'face_filters': [ { 'value': face_filter, 'group': face_filter_group } for face_filter, face_filter_group in face_filter_core.FACE_FILTER_SET.items() ],
+		'face_filter_multiple_groups': face_filter_core.FACE_FILTER_MULTIPLE_GROUPS,
+		'frame_filters': list(frame_filter_core.FRAME_FILTER_PAINTERS)
 	}
 
 
@@ -930,6 +943,28 @@ def assign_library_item(person : Dict[str, Any], library_item : Optional[Dict[st
 		person['sticker'] = sticker_options
 
 
+class FiltersPayload(BaseModel):
+	filters : List[str] = []
+
+
+@app.post('/api/people/{person_id}/filters')
+def update_filters(person_id : int, payload : FiltersPayload) -> Dict[str, Any]:
+	ensure_idle()
+	person = find_person(person_id)
+
+	if not person:
+		raise HTTPException(404, 'error.person_not_found')
+
+	with ENGINE_LOCK:
+		person['filters'] = face_filter_core.normalize_face_filters(payload.filters)
+		apply_settings()
+
+		# the hair and skin colours need the face parser, fetched now rather than on the next frame
+		if person.get('filters') and not ensure_models(collect_wanted_processors()):
+			raise HTTPException(503, 'error.model_download')
+	return serialize_session()
+
+
 @app.post('/api/people/{person_id}/sticker')
 def update_sticker(person_id : int, payload : Dict[str, Any]) -> Dict[str, Any]:
 	ensure_idle()
@@ -1053,6 +1088,7 @@ def clear_sources() -> Dict[str, Any]:
 	with ENGINE_LOCK:
 		for person in SESSION.get('people'):
 			person['source_id'] = None
+			person['filters'] = []
 		apply_settings()
 	return serialize_session()
 
@@ -1230,6 +1266,7 @@ def update_settings(payload : Dict[str, Any]) -> Dict[str, Any]:
 		'face_detector_score': lambda value: 0.05 <= float(value) <= 0.95,
 		'rotated_faces': lambda value: isinstance(value, bool),
 		'live_quality': lambda value: value in [ 'fluid', 'sharp' ],
+		'frame_filter': lambda value: value is None or value in frame_filter_core.FRAME_FILTER_PAINTERS,
 		'output_image_quality': lambda value: 10 <= int(value) <= 100,
 		'output_video_quality': lambda value: 10 <= int(value) <= 100,
 		'execution_provider': lambda value: value in facefusion.execution.get_available_execution_providers()
@@ -1322,7 +1359,7 @@ def render() -> Dict[str, Any]:
 		raise HTTPException(400, 'error.no_target')
 	if target.get('type') == 'live':
 		raise HTTPException(400, 'error.live_render')
-	if not any(person.get('source_id') for person in SESSION.get('people')):
+	if not any(person.get('source_id') or person.get('filters') for person in SESSION.get('people')) and not SETTINGS.get('frame_filter'):
 		raise HTTPException(400, 'error.no_assignment')
 	start_task('render', run_render)
 	return serialize_session()
@@ -1787,17 +1824,19 @@ def process_live_frame(vision_frame : VisionFrame) -> Tuple[VisionFrame, List[Di
 		LIVE.update({ 'checking': True, 'checked_at': now })
 		LIVE_CONTENT_WORKER.submit(check_live_content)
 	temp_vision_frame = vision_frame.copy()
+	# without a known face only the style of the whole image applies, the face processors would detect again for nothing
+	processors = [ processor for processor in state_manager.get_item('processors') if pairs or processor == 'frame_filter' ]
 
 	if LIVE.get('flagged'):
 		temp_vision_frame = obscure_frame(temp_vision_frame)
-	elif pairs:
+	elif processors:
 		# the processors look the faces up by frame, so they all get these matched and smoothed ones
 		frame_key = create_frame_key(vision_frame)
 		face_mapper.FACE_TRACK_SET[frame_key] = pairs
 		temp_vision_mask = extract_vision_mask(temp_vision_frame)
 
 		try:
-			for processor_module in get_processors_modules(state_manager.get_item('processors')):
+			for processor_module in get_processors_modules(processors):
 				logger.disable()
 				ready = processor_module.pre_process('stream')
 				logger.enable()

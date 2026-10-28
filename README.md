@@ -15,11 +15,12 @@ This repository is a **fork of [FaceFusion](https://github.com/facefusion/facefu
 - **Every person detected**: each face in a photo; in a video, the studio goes through the whole clip and groups the appearances of the same person, even in profile (face embeddings, several angles per person).
 - **One source face per person**: face library, drag and drop or "select, then tap", automatic assignment in order. People without a source stay untouched.
 - **Images pasted on heads (memes)**: any image (a transparent PNG works best: emoji, cut-out head, logo…) follows a person's head, with its position and tilt. The image also turns in **3D** when the head turns or nods (pose estimated from the face detector's 5 points, the same perspective as the preview's CSS 3D, adjustable strength). In videos, the image motion is lightly smoothed, never across a cut. Size, offset, rotation and mirroring are set per person with a live preview, and the shape can be whole, round or **cut out** (the background and shoulders are removed automatically by the MODNet model, 25 MB, downloaded on first use). A plain photo of someone is cropped around their head automatically. Face swaps and images can be mixed in the same render.
+- **Fun filters per person**, inspired by Snapchat and Instagram lenses: distortions (big eyes, big mouth, big nose, big head, tiny face, long or squashed face, alien, baby, swirl, cyclops, upside-down eyes and mouth), hair colours (pink, blue, green, red, platinum, rainbow), skin colours (green, blue, yellow, red) and drawn props (clown nose, demon eyes, rosy cheeks, moustache, pixel shades). One filter per group, props add up, and they mix with a face swap or a pasted image. Plus a **style for the whole picture**: comic book, pencil, silent film, 8-bit, thermal camera, night vision, VHS tape. All of it works on photos, videos and the live camera.
 - **Lying or upside-down faces**: the detector only recognises upright faces, so the studio also searches the frame turned 90° both ways. A person lying down gets detected and swapped, and pasted images follow their head. It can be turned off in **Settings → Recognition** (detection is a bit slower with it).
 - **One-to-one assignment**: two lookalikes never get the same source in the same frame.
 - **Persistence in videos**: when detection misses a face for a few frames (blur, a hand in front), the swap or the pasted image carries on (up to 0.25 s), only if the head stayed almost in place. A face that is detected but not recognised (profile) is attached to the right person. Nothing is ever filled in across a cut or onto another person.
 - **Preview and before/after comparison** on any frame of the video.
-- **Live camera**: the same per-person faces and pasted images on your webcam, in real time, sent straight to a **virtual camera** to pick in Meet, Zoom or Slack, without opening OBS.
+- **Live camera**: the same per-person faces, pasted images and filters on your webcam, in real time, sent straight to a **virtual camera** to pick in Meet, Zoom or Slack, without opening OBS.
 - **Video clip**: under the video, a filmstrip with two handles to drag (as in Photos); the **I** and **O** keys set the start and the end at the current frame. Only the clip gets analysed and rendered.
 - Render progress and cancellation.
 - **Visible model downloads**: name, percentage and MB received.
@@ -46,6 +47,8 @@ Otherwise the base models (~1 GB) are downloaded on the first start, with their 
    - drag it onto the person's "+";
    - or tap it, then tap the person (in the list or right on the frame).
    - For an image, tap the **Adjust** button (sliders icon) on the person: size, position, rotation, 3D effect, mirror and shape (whole, round, cut out). The **Preview** tab opens and the image updates live.
+   - For filters, tap the **Filters** button (wand icon) on the person and pick distortions, hair and skin colours or props. A person can have filters without any source.
+   - The **style** menu above the frame changes the look of the whole picture, for everyone.
 4. Check the result with **Preview** or **Compare**.
 5. **Generate**. The result is saved in `workspace/outputs/`.
 
@@ -56,7 +59,7 @@ Click **Live** (or **Use my camera** on the start screen). The studio reads the 
 
 - **Virtual camera** sends the result to *OBS Virtual Camera*: pick that camera in Meet, Zoom or Slack. It is the virtual camera that OBS Studio installs, so OBS must be installed (click **Start Virtual Camera** in OBS once to install it), but it never needs to be open. The stream goes on when the studio's window is closed, until you click **Stop camera**.
 - The camera menu picks which camera to use when the computer has several (an iPhone through Continuity Camera, for example).
-- **Fluid** uses the fast InSwapper 128 model, **Sharp** the model picked in the settings (nicer, slower). On an M4 Pro, expect about 20 frames per second with one swapped face at 1280×720 and 30 with pasted images only, depending on the machine's load. The virtual camera always runs at 30 frames per second and repeats the latest result in between.
+- **Fluid** uses the fast InSwapper 128 model, **Sharp** the model picked in the settings (nicer, slower). On an M4 Pro, expect about 20 frames per second with one swapped face at 1280×720 and 30 with pasted images or filters only, depending on the machine's load. Hair and skin colours cost about 35 ms per face (the face parser runs on every frame), the distortions and props a few milliseconds. The virtual camera always runs at 30 frames per second and repeats the latest result in between.
 - **Mirror** flips your own view like a selfie camera; what the others see is never mirrored.
 - Without the virtual camera, the camera turns itself off 10 seconds after the last studio window is closed.
 - The live mode is disabled when the studio runs with `--remote` (a shared server), and `--test-camera video.mp4` lists a video file among the cameras, played in a loop, for tests and demos.
@@ -78,8 +81,9 @@ The studio is driven by a local HTTP API (the port is printed at startup, `7870`
 | `POST` | `/api/library?kind=sticker` | Adds images to paste on heads |
 | `POST` | `/api/people/{id}/source` | `{ "source_id": "…" }` assigns a source to a person (`null` removes it) |
 | `POST` | `/api/people/{id}/sticker` | Sets the pasted image: `scale`, `offset_x`, `offset_y` (in face sizes), `rotation` (°), `follow_rotation`, `depth` (3D effect, 0–1), `mirror`, `round`, `cutout`, or `{ "reset": true }` |
+| `POST` | `/api/people/{id}/filters` | `{ "filters": [ "big_eyes", "hair_pink", "clown_nose" ] }` sets a person's filters (the names are listed in `face_filters` of `/api/options`; one per group, the `prop` group adds up; `[]` removes them) |
 | `POST` | `/api/people/assign-in-order?kind=face` | Assigns the sources (`face` or `sticker`) in order |
-| `POST` | `/api/settings` | Changes the settings (see `settings` in `/api/state`) |
+| `POST` | `/api/settings` | Changes the settings (see `settings` in `/api/state`), for example `{ "frame_filter": "comic" }` for the style of the whole picture (`frame_filters` of `/api/options`, `null` for none) |
 | `POST` | `/api/trim` | `{ "start": 0, "end": 300 }` video clip, in frame numbers (end excluded, `null` = edge of the video) |
 | `GET` | `/api/preview?frame_number=0` | JPEG preview of a frame |
 | `POST` | `/api/render` | Starts the render (task) |
@@ -102,6 +106,7 @@ API=http://127.0.0.1:7870
 curl -s -F "file=@group.jpg" $API/api/target
 curl -s -F "files=@alice.jpg" -F "files=@bob.jpg" $API/api/library
 curl -s -X POST $API/api/people/assign-in-order
+curl -s -X POST -H 'Content-Type: application/json' -d '{"filters": ["big_head", "hair_rainbow"]}' $API/api/people/1/filters
 curl -s -X POST $API/api/render
 curl -s $API/api/task
 ```
@@ -169,6 +174,8 @@ Everything below sits in `facefusion/`, as commits on top of the 3.5.4 release:
 - `face_selector.py`: internal `mapping` selector mode.
 - `processors/modules/face_swapper/core.py`: in `mapping` mode, each face gets its own source face.
 - `processors/modules/face_sticker/` (new): a processor that pastes an image on the head of the mapped people, following their position, size, tilt and 3D rotation (pose estimated from the detector's 5 points, perspective projection, smoothing within each shot that stays correct for upside-down heads).
+- `processors/modules/face_filter/` (new): filters drawn on the mapped people, placed from the detector's 5 points so they also work in the live mode, which skips the 68 landmarks. Distortions are one `cv2.remap` per face, hair and skin colours use the face parser (BiSeNet) on an FFHQ crop that includes the hair, props are drawn with sub-pixel precision.
+- `processors/modules/frame_filter/` (new): a style for the whole picture, applied after every other processor.
 - `face_mapper.py`: in videos, a first pass tracks every person through the whole video and carefully fills short gaps; the swapper, the enhancer and the pasted images rely on it.
 - `workflows/image_to_video.py`: processors can prepare the whole video before rendering (`prepare_frames`) and receive the number of the frame being processed.
 - `video_manager.py`: video reads are guarded by a lock, which fixes a random libavcodec crash (`pthread_frame.c`, `async_lock`) when several threads read the video.
