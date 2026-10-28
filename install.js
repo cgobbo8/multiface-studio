@@ -129,6 +129,18 @@ module.exports = async kernel =>
 				}
 			},
 			{
+				// the studio's own packages, such as the virtual camera
+				method: 'shell.run',
+				params:
+				{
+					message: 'pip install -r studio/requirements.txt',
+					conda:
+					{
+						path: path.resolve(__dirname, '.env')
+					}
+				}
+			},
+			{
 				method: 'input',
 				params:
 				{

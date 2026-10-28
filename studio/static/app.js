@@ -18,10 +18,11 @@ const el =
 	liveFlagged: $('#live-flagged'),
 	liveQuality: $('#live-quality'),
 	liveMirror: $('#live-mirror'),
-	livePopout: $('#live-popout'),
+	liveVirtual: $('#live-virtual'),
+	liveCameraPicker: $('#live-camera-picker'),
+	liveCamera: $('#live-camera'),
 	liveToggle: $('#live-toggle'),
 	liveToggleLabel: $('#live-toggle-label'),
-	liveVideo: $('#live-video'),
 	openTargetLabel: $('#open-target-label'),
 	openSettings: $('#open-settings'),
 	render: $('#render'),
@@ -468,6 +469,7 @@ function setMode(mode)
 {
 	state.mode = mode;
 	renderMode();
+	sendLiveViews();
 
 	// a preview computed without stickers (live adjusting) cannot stand in for the baked one, and the other way round
 	if (mode !== 'original' && (state.previewDirty || state.previewLive !== isLiveSticker()))
@@ -1667,10 +1669,8 @@ async function openTarget(file)
 	{
 		return;
 	}
-	if (live.running || live.stream)
-	{
-		stopLive();
-	}
+	// the studio turns the camera off itself when the file replaces it
+	closeLiveSocket();
 	state.importing = true;
 	showHud({ stage: t('import.stage'), message: file.name, progress: 0 }, false);
 	try
@@ -1749,43 +1749,54 @@ function confirmDialog(title, message)
 
 /* ------------------------------------------------------------ live camera */
 
+// the studio reads the camera itself: this page only shows the stream and steers it
 const live =
 {
-	stream: null,
 	socket: null,
-	running: false,
 	starting: false,
-	inFlight: 0,
-	maxInFlight: 4,
-	details: null,
-	capture: document.createElement('canvas'),
-	width: 0,
-	height: 0,
-	received: [],
-	lastSent: 0,
-	sendScheduled: false,
-	drawing: 0,
-	popup: null,
-	popupCanvas: null,
+	frame: null,
+	sequence: 0,
+	drawnSequence: 0,
+	sentViews: '',
+	cameras: [],
+	pickerKey: '',
 	autoScanned: false,
-	mirror: readLiveMirror()
+	mirror: readLiveSetting('studio-live-mirror') !== '0',
+	camera: readLiveSetting('studio-live-camera')
 };
 
-function readLiveMirror()
+function readLiveSetting(key)
 {
 	try
 	{
-		return localStorage.getItem('studio-live-mirror') !== '0';
+		return localStorage.getItem(key);
 	}
 	catch (error)
 	{
-		return true;
+		return null;
 	}
+}
+
+function writeLiveSetting(key, value)
+{
+	try
+	{
+		localStorage.setItem(key, value);
+	}
+	catch (error)
+	{
+		/* private mode: the choice just won't persist */
+	}
+}
+
+function isCameraRunning()
+{
+	return Boolean(state.session && state.session.live && state.session.live.running);
 }
 
 async function startLive()
 {
-	if (live.running || live.starting || isBusy() || state.importing)
+	if (live.starting || isBusy() || state.importing)
 	{
 		return;
 	}
@@ -1799,33 +1810,8 @@ async function startLive()
 
 	try
 	{
-		live.stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }, audio: false });
-		el.liveVideo.srcObject = live.stream;
-		await el.liveVideo.play();
-	}
-	catch (error)
-	{
-		live.starting = false;
-		stopCamera();
-		renderLive();
-		toast(t('live.camera_denied'), 'error', 7000);
-		return;
-	}
-	// 640 px frames keep the round trip short, the swap only works on the faces anyway
-	const scale = Math.min(1, 640 / el.liveVideo.videoWidth);
-
-	live.width = Math.round(el.liveVideo.videoWidth * scale / 2) * 2;
-	live.height = Math.round(el.liveVideo.videoHeight * scale / 2) * 2;
-	[ live.capture, el.liveOriginal, el.liveResult ].forEach(canvas =>
-	{
-		canvas.width = live.width;
-		canvas.height = live.height;
-	});
-
-	try
-	{
 		const wasLive = isLive();
-		const session = await withDownloadWatch(() => request('POST', '/api/live/start', { width: live.width, height: live.height }));
+		const session = await withDownloadWatch(() => request('POST', '/api/live/start', { camera: live.camera }));
 
 		if (!wasLive)
 		{
@@ -1834,22 +1820,100 @@ async function startLive()
 			state.renderedPersonIds = new Set();
 			live.autoScanned = false;
 		}
+		live.starting = false;
 		setSession(session);
+
+		if (session.live.notice)
+		{
+			toast(translateServer(session.live.notice), 'error', 8000);
+		}
+		loadCameras();
 	}
 	catch (error)
 	{
 		live.starting = false;
-		stopCamera();
 		renderLive();
 		handleError(error);
-		return;
 	}
-	live.running = true;
-	live.starting = false;
-	live.received = [];
-	openLiveSocket();
-	drawLiveOriginal();
-	render();
+}
+
+async function stopLive()
+{
+	try
+	{
+		setSession(await request('POST', '/api/live/stop'));
+	}
+	catch (error)
+	{
+		handleError(error);
+	}
+}
+
+async function toggleVirtualCamera()
+{
+	const enabled = !state.session.live.virtual_camera;
+
+	el.liveVirtual.disabled = true;
+
+	try
+	{
+		setSession(await request('POST', '/api/live/virtual-camera', { enabled }));
+
+		if (enabled)
+		{
+			toast(t(isCameraRunning() ? 'live.virtual_on' : 'live.virtual_later'), 'info', 8000);
+		}
+	}
+	catch (error)
+	{
+		handleError(error);
+	}
+	finally
+	{
+		el.liveVirtual.disabled = false;
+	}
+}
+
+async function loadCameras()
+{
+	try
+	{
+		live.cameras = (await request('GET', '/api/live/cameras')).cameras.map(camera => camera.name);
+	}
+	catch (error)
+	{
+		live.cameras = [];
+	}
+	renderCameraPicker();
+}
+
+function renderCameraPicker()
+{
+	const current = state.session.live.camera || live.camera;
+	const names = !current || live.cameras.includes(current) ? live.cameras : [ current ].concat(live.cameras);
+	const key = names.join('\n') + '\n' + current;
+
+	// rebuilt only when something changed, an open menu must not lose its options
+	if (key !== live.pickerKey)
+	{
+		live.pickerKey = key;
+		el.liveCamera.replaceChildren(...names.map(name => new Option(name, name, false, name === current)));
+	}
+	el.liveCameraPicker.hidden = names.length < 2;
+}
+
+function syncLiveSocket()
+{
+	const running = isLive() && isCameraRunning();
+
+	if (running && !live.socket)
+	{
+		openLiveSocket();
+	}
+	else if (!running && live.socket)
+	{
+		closeLiveSocket();
+	}
 }
 
 function openLiveSocket()
@@ -1857,205 +1921,151 @@ function openLiveSocket()
 	const socket = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/live/stream');
 
 	socket.binaryType = 'blob';
-	socket.addEventListener('open', () =>
+	live.socket = socket;
+	live.frame = null;
+	live.sentViews = '';
+	[ el.liveOriginal, el.liveResult ].forEach(canvas =>
 	{
-		// a few frames in flight keep the engine busy while the previous ones travel back
-		for (let index = 0; index < live.maxInFlight; index++)
+		if (canvas.width !== target().width || canvas.height !== target().height)
 		{
-			setTimeout(sendLiveFrame, index * 35);
+			canvas.width = target().width;
+			canvas.height = target().height;
 		}
 	});
-	socket.addEventListener('message', event => onLiveMessage(event.data));
+	socket.addEventListener('open', sendLiveViews);
+	socket.addEventListener('message', event => onLiveMessage(socket, event.data));
 	socket.addEventListener('close', () =>
 	{
-		if (live.running && live.socket === socket)
+		if (live.socket === socket)
 		{
-			stopLive();
-			toast(t('live.disconnected'), 'error');
+			live.socket = null;
+			// the session says whether the camera is still on: if so, the stream reconnects
+			setTimeout(() => syncWithServer().catch(() => {}), 1000);
 		}
 	});
-	live.socket = socket;
-	live.inFlight = 0;
 }
 
-function sendLiveFrame()
+function closeLiveSocket()
 {
 	const socket = live.socket;
 
-	if (!live.running || !socket || socket.readyState !== WebSocket.OPEN || live.inFlight >= live.maxInFlight || el.liveVideo.readyState < 2)
-	{
-		return;
-	}
-	// sending faster than the camera would only resend the same picture
-	const wait = 30 - (performance.now() - live.lastSent);
+	live.socket = null;
+	live.frame = null;
+	state.faces = [];
 
-	if (wait > 0)
+	if (socket)
 	{
-		if (!live.sendScheduled)
-		{
-			live.sendScheduled = true;
-			setTimeout(() =>
-			{
-				live.sendScheduled = false;
-				sendLiveFrame();
-			}, wait);
-		}
-		return;
+		socket.close();
 	}
-	live.inFlight++;
-	live.lastSent = performance.now();
-	live.capture.getContext('2d').drawImage(el.liveVideo, 0, 0, live.width, live.height);
-	live.capture.toBlob(blob =>
-	{
-		if (blob && live.running && socket.readyState === WebSocket.OPEN)
-		{
-			socket.send(blob);
-		}
-		else
-		{
-			live.inFlight = Math.max(0, live.inFlight - 1);
-		}
-	}, 'image/jpeg', 0.8);
 }
 
-async function onLiveMessage(data)
+function sendLiveViews()
 {
-	// each result comes as its details, then its picture
+	// only the pictures on screen travel: the result, the untouched camera, or both to compare
+	const views = state.mode === 'original' ? [ 'original' ] : state.mode === 'compare' ? [ 'original', 'result' ] : [ 'result' ];
+
+	if (live.socket && live.socket.readyState === WebSocket.OPEN && live.sentViews !== views.join())
+	{
+		live.sentViews = views.join();
+		live.socket.send(JSON.stringify({ views }));
+	}
+}
+
+async function onLiveMessage(socket, data)
+{
+	if (live.socket !== socket)
+	{
+		return;
+	}
+	// each frame comes as its details, then one picture per view
 	if (typeof data === 'string')
 	{
-		live.details = JSON.parse(data);
+		const details = JSON.parse(data);
+
+		if (details.stopped)
+		{
+			closeLiveSocket();
+
+			if (details.error)
+			{
+				toast(translateServer(details.error), 'error', 7000);
+			}
+			// another window may have opened a file in its place; a camera being switched answers by itself
+			if (!live.starting)
+			{
+				syncWithServer().catch(() => {});
+			}
+			return;
+		}
+		live.frame = { details, pictures: [], sequence: ++live.sequence };
 		return;
 	}
-	const details = live.details || { faces: [], flagged: false };
-	const now = performance.now();
+	const frame = live.frame;
 
-	live.inFlight = Math.max(0, live.inFlight - 1);
-	sendLiveFrame();
-
-	if (!live.running || !data.size)
+	if (!frame)
 	{
 		return;
 	}
-	live.received.push(now);
+	frame.pictures.push(data);
 
-	while (live.received.length && now - live.received[0] > 1000)
+	if (frame.pictures.length < frame.details.views.length)
 	{
-		live.received.shift();
+		return;
 	}
-	const bitmap = await createImageBitmap(data);
+	live.frame = null;
 
-	el.liveResult.getContext('2d').drawImage(bitmap, 0, 0, live.width, live.height);
+	const bitmaps = await Promise.all(frame.pictures.map(picture => createImageBitmap(picture)));
 
-	if (live.popup && !live.popup.closed)
+	// pictures decode side by side, an older frame never covers a newer one
+	if (live.socket !== socket || frame.sequence < live.drawnSequence)
 	{
-		live.popupCanvas.getContext('2d').drawImage(bitmap, 0, 0, live.popupCanvas.width, live.popupCanvas.height);
+		bitmaps.forEach(bitmap => bitmap.close());
+		return;
 	}
-	bitmap.close();
-	state.faces = details.faces;
+	live.drawnSequence = frame.sequence;
+	frame.details.views.forEach((view, index) =>
+	{
+		const canvas = view === 'original' ? el.liveOriginal : el.liveResult;
+
+		canvas.getContext('2d').drawImage(bitmaps[index], 0, 0, canvas.width, canvas.height);
+		bitmaps[index].close();
+	});
+	state.faces = frame.details.faces;
 	renderFaces();
-	el.liveFlagged.hidden = !details.flagged;
-	el.liveFps.textContent = t('live.fps', { fps: live.received.length });
+	el.liveFlagged.hidden = !frame.details.flagged;
+	el.liveFps.textContent = t('live.fps', { fps: frame.details.fps });
 
 	// the first faces in front of the camera become the people, like when a photo is opened
-	if (!live.autoScanned && !people().length && details.faces.length && !isBusy())
+	if (!live.autoScanned && !people().length && frame.details.faces.length && !isBusy())
 	{
 		live.autoScanned = true;
 		scanFrame();
 	}
 }
 
-function drawLiveOriginal()
-{
-	const draw = () =>
-	{
-		if (!live.running)
-		{
-			return;
-		}
-		// the untouched camera is drawn locally, without waiting for the engine
-		if (state.mode !== 'result' && el.liveVideo.readyState >= 2)
-		{
-			el.liveOriginal.getContext('2d').drawImage(el.liveVideo, 0, 0, live.width, live.height);
-		}
-		live.drawing = requestAnimationFrame(draw);
-	};
-
-	cancelAnimationFrame(live.drawing);
-	live.drawing = requestAnimationFrame(draw);
-}
-
-function stopCamera()
-{
-	if (live.stream)
-	{
-		live.stream.getTracks().forEach(track => track.stop());
-	}
-	live.stream = null;
-	el.liveVideo.srcObject = null;
-}
-
-function stopLive()
-{
-	const socket = live.socket;
-
-	live.running = false;
-	live.socket = null;
-	live.inFlight = 0;
-	cancelAnimationFrame(live.drawing);
-
-	if (socket)
-	{
-		socket.close();
-	}
-	stopCamera();
-	state.faces = [];
-	render();
-}
-
-function openLivePopout()
-{
-	const width = 960;
-	const popup = window.open('', 'multiface-live', 'popup=yes,width=' + width + ',height=' + Math.round(width * live.height / Math.max(1, live.width)));
-
-	if (!popup)
-	{
-		toast(t('live.popup_blocked'), 'error', 6000);
-		return;
-	}
-	// the result alone, unmirrored, for OBS to capture and turn into a virtual camera
-	const canvas = popup.document.createElement('canvas');
-
-	popup.document.title = t('live.popout_window');
-	popup.document.body.replaceChildren(canvas);
-	popup.document.body.style.cssText = 'margin:0;height:100vh;background:#000;overflow:hidden';
-	canvas.width = live.width;
-	canvas.height = live.height;
-	canvas.style.cssText = 'display:block;width:100vw;height:100vh;object-fit:contain';
-	live.popup = popup;
-	live.popupCanvas = canvas;
-	popup.focus();
-}
-
 function renderLive()
 {
 	const liveMode = isLive();
+	const running = isCameraRunning();
 
+	syncLiveSocket();
 	el.liveBar.hidden = !liveMode;
-	el.liveOff.hidden = !liveMode || live.running || live.starting;
+	el.liveOff.hidden = !liveMode || running || live.starting;
 	el.frame.classList.toggle('is-mirrored', liveMode && live.mirror);
 
 	if (!liveMode)
 	{
 		return;
 	}
-	el.liveBar.classList.toggle('is-off', !live.running);
-	el.liveState.textContent = live.running ? t('live.on') : live.starting ? t('live.connecting') : t('live.paused');
-	el.liveToggleLabel.textContent = live.running ? t('live.stop') : t('live.start');
-	el.liveToggle.classList.toggle('is-start', !live.running);
+	el.liveBar.classList.toggle('is-off', !running);
+	el.liveState.textContent = running ? t('live.on') : live.starting ? t('live.connecting') : t('live.paused');
+	el.liveToggleLabel.textContent = running ? t('live.stop') : t('live.start');
+	el.liveToggle.classList.toggle('is-start', !running);
 	el.liveMirror.classList.toggle('is-set', live.mirror);
-	el.livePopout.disabled = !live.running;
+	el.liveVirtual.classList.toggle('is-set', Boolean(state.session.live.virtual_camera));
+	renderCameraPicker();
 
-	if (!live.running)
+	if (!running)
 	{
 		el.liveFps.textContent = '';
 		el.liveFlagged.hidden = true;
@@ -2637,20 +2647,23 @@ function installEvents()
 	el.startLive.addEventListener('click', startLive);
 	el.dropzoneLive.addEventListener('click', startLive);
 	el.liveResume.addEventListener('click', startLive);
-	el.liveToggle.addEventListener('click', () => live.running ? stopLive() : startLive());
-	el.livePopout.addEventListener('click', openLivePopout);
+	el.liveToggle.addEventListener('click', () => isCameraRunning() ? stopLive() : startLive());
+	el.liveVirtual.addEventListener('click', toggleVirtualCamera);
+	el.liveCamera.addEventListener('change', () =>
+	{
+		live.camera = el.liveCamera.value;
+		writeLiveSetting('studio-live-camera', live.camera);
+
+		// a running camera switches right away
+		if (isCameraRunning())
+		{
+			startLive();
+		}
+	});
 	el.liveMirror.addEventListener('click', () =>
 	{
 		live.mirror = !live.mirror;
-
-		try
-		{
-			localStorage.setItem('studio-live-mirror', live.mirror ? '1' : '0');
-		}
-		catch (error)
-		{
-			/* private mode: the choice just won't persist */
-		}
+		writeLiveSetting('studio-live-mirror', live.mirror ? '1' : '0');
 		renderLive();
 		updateCompare();
 	});
@@ -2660,7 +2673,6 @@ function installEvents()
 		renderLive();
 		saveSetting('live_quality', button.dataset.quality, false);
 	}));
-	window.addEventListener('beforeunload', stopCamera);
 	el.addSources.addEventListener('click', () => el.sourcesInput.click());
 	el.sourcesInput.addEventListener('change', () =>
 	{
@@ -2805,7 +2817,8 @@ async function syncWithServer()
 	if (!session.target || session.target.id !== previousTargetId)
 	{
 		state.frameNumber = 0;
-		state.mode = 'original';
+		// a camera left running by another window comes back straight to its result
+		state.mode = session.target && session.target.type === 'live' ? 'result' : 'original';
 		state.faces = [];
 		state.renderedPersonIds = new Set();
 	}
@@ -2814,6 +2827,10 @@ async function syncWithServer()
 	if (target())
 	{
 		showFrame();
+	}
+	if (isLive())
+	{
+		loadCameras();
 	}
 	if (isBusy())
 	{

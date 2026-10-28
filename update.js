@@ -1,3 +1,5 @@
+const path = require('path');
+
 module.exports =
 {
 	run:
@@ -8,6 +10,18 @@ module.exports =
 			params:
 			{
 				message: 'git pull'
+			}
+		},
+		{
+			// a new version may bring new packages for the studio
+			method: 'shell.run',
+			params:
+			{
+				message: 'pip install -r studio/requirements.txt',
+				conda:
+				{
+					path: path.resolve(__dirname, '.env')
+				}
 			}
 		}
 	]

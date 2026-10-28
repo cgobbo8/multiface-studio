@@ -1,0 +1,3 @@
+# the studio's own packages, on top of FaceFusion's requirements.txt
+# virtual camera (through OBS's on macOS and Windows, v4l2loopback on Linux)
+pyvirtualcam==0.15.0

@@ -1665,6 +1665,17 @@ body.is-armed .slot:hover {
 	cursor: pointer;
 }
 
+.select-chip select {
+	max-width: 190px;
+	height: 26px;
+	padding: 0 26px 0 10px;
+	border-radius: 999px;
+	font-size: 12px;
+	font-weight: 500;
+	color: inherit;
+	text-overflow: ellipsis;
+}
+
 .select::after {
 	content: "";
 	position: absolute;

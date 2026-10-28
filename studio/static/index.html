@@ -107,13 +107,14 @@
 						<span class="live-flagged" id="live-flagged" data-i18n="live.flagged" hidden>Contenu masqué par l’analyseur de FaceFusion</span>
 					</div>
 					<div class="live-actions">
+						<label class="select select-chip" id="live-camera-picker" data-i18n-title="live.camera_title" title="Caméra utilisée" hidden><select id="live-camera"></select></label>
 						<div class="segmented segmented-small" id="live-quality" role="tablist" data-i18n-title="live.quality_title" title="Fluide : modèle rapide InSwapper 128. Net : le modèle choisi dans les réglages, plus lent.">
 							<span class="segmented-thumb"></span>
 							<button role="tab" data-quality="fluid" data-i18n="live.fluid">Fluide</button>
 							<button role="tab" data-quality="sharp" data-i18n="live.sharp">Net</button>
 						</div>
 						<button class="chip" id="live-mirror"><span data-i18n="live.mirror">Miroir</span></button>
-						<button class="chip" id="live-popout" data-i18n-title="live.popout_title" title="Ouvre le résultat seul dans une fenêtre, à capturer dans OBS"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="13" rx="2.5"/><path d="M8 21h8"/></svg><span data-i18n="live.popout">Fenêtre pour OBS</span></button>
+						<button class="chip" id="live-virtual" data-i18n-title="live.virtual_title" title="Envoie le résultat à la caméra « OBS Virtual Camera », à choisir dans Meet, Zoom ou Slack."><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="3"/><path d="M16 10.5l5-3v9l-5-3"/></svg><span data-i18n="live.virtual">Caméra virtuelle</span></button>
 						<button class="chip chip-danger" id="live-toggle"><span id="live-toggle-label" data-i18n="live.stop">Couper la caméra</span></button>
 					</div>
 				</div>
@@ -284,7 +285,6 @@
 	<div class="drop-overlay" id="drop-overlay" hidden><div class="drop-overlay-inner"><span id="drop-overlay-text" data-i18n="drop.open">Déposer pour ouvrir</span></div></div>
 	<div class="toasts" id="toasts" aria-live="polite"></div>
 
-	<video id="live-video" playsinline muted hidden></video>
 	<input type="file" id="target-input" accept="image/*,video/*" hidden>
 	<input type="file" id="sources-input" accept="image/*" multiple hidden>
 	<input type="file" id="slot-input" accept="image/*" hidden>

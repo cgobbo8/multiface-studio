@@ -18,10 +18,11 @@ import threading
 import time
 import uuid
 import webbrowser
-from concurrent.futures import ThreadPoolExecutor
+from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from pathlib import Path
 from urllib.parse import urlparse
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
 STUDIO_PATH = Path(__file__).resolve().parent
 ROOT_PATH = STUDIO_PATH.parent
@@ -37,7 +38,12 @@ CLI.add_argument('--port', type = int, default = 7870)
 CLI.add_argument('--open-browser', action = 'store_true')
 # served to other machines: nothing may run on the host on behalf of a visitor
 CLI.add_argument('--remote', action = 'store_true')
+# a video file listed among the cameras and played in a loop, for tests and demos
+CLI.add_argument('--test-camera')
 CLI_ARGS = CLI.parse_args()
+
+if CLI_ARGS.test_camera:
+	CLI_ARGS.test_camera = os.path.abspath(CLI_ARGS.test_camera)
 
 # facefusion resolves its modules and models relative to the working directory and parses sys.argv while building its program
 os.chdir(ENGINE_PATH)
@@ -472,7 +478,8 @@ def serialize_session() -> Dict[str, Any]:
 		'trim': SESSION.get('trim'),
 		'output': SESSION.get('output'),
 		'settings': SETTINGS,
-		'task': serialize_task()
+		'task': serialize_task(),
+		'live': serialize_live()
 	}
 
 
@@ -799,6 +806,8 @@ def upload_target(file : UploadFile = File(...)) -> Dict[str, Any]:
 		if vision_frame is not None:
 			merge_faces_into_people(vision_frame, get_many_faces([ vision_frame ]), 0)
 		apply_settings()
+	# the camera belonged to the live target, it stops once the new one is ready for the windows that follow it
+	stop_camera()
 	return serialize_session()
 
 
@@ -1335,14 +1344,46 @@ LIVE_SMOOTHING = 0.6
 LIVE_MEMORY = 0.4
 LIVE_CONTENT_INTERVAL = 2.0
 # several camera frames are processed at once, the swap model runs them side by side
-LIVE_WORKERS = ThreadPoolExecutor(max_workers = 4, thread_name_prefix = 'live')
+LIVE_IN_FLIGHT = 4
+LIVE_WORKERS = ThreadPoolExecutor(max_workers = LIVE_IN_FLIGHT, thread_name_prefix = 'live')
 LIVE_CONTENT_WORKER = ThreadPoolExecutor(max_workers = 1, thread_name_prefix = 'live-content')
 LIVE_FAST_SWAPPER = ('inswapper_128_fp16', '128x128')
+LIVE_FRAME_SIZE = (1280, 720)
+LIVE_FPS = 30
+LIVE_START_TIMEOUT = 15.0
+# with no window showing it and no virtual camera to feed, the camera turns itself off
+LIVE_IDLE_TIMEOUT = 10.0
+# the virtual camera shows up among the cameras: reading it back would feed the stream into itself
+VIRTUAL_CAMERA_NAMES = [ 'OBS Virtual Camera' ]
+
+# the studio reads the camera itself, so the stream goes on without any window open (virtual camera)
+CAMERA : Dict[str, Any] =\
+{
+	'generation': 0,
+	'running': False,
+	'name': None,
+	'process': None,
+	'input': None,
+	'input_index': 0,
+	'output': None,
+	'output_times': [],
+	'error': None,
+	'viewers': 0,
+	'alone_since': 0.0,
+	'virtual_wanted': False,
+	'virtual_camera': None,
+	'virtual_thread': None
+}
+CAMERA_LOCK = threading.RLock()
+CAMERA_CONDITION = threading.Condition()
 
 
 class LivePayload(BaseModel):
-	width : int
-	height : int
+	camera : Optional[str] = None
+
+
+class VirtualCameraPayload(BaseModel):
+	enabled : bool
 
 
 def is_live() -> bool:
@@ -1350,25 +1391,322 @@ def is_live() -> bool:
 	return bool(target and target.get('type') == 'live')
 
 
+def serialize_live() -> Dict[str, Any]:
+	return\
+	{
+		'running': CAMERA.get('running'),
+		'camera': CAMERA.get('name'),
+		'virtual_camera': CAMERA.get('virtual_wanted')
+	}
+
+
+def list_cameras() -> List[Dict[str, Any]]:
+	cameras = []
+
+	if CLI_ARGS.test_camera:
+		cameras.append({ 'name': Path(CLI_ARGS.test_camera).name, 'kind': 'file', 'device': CLI_ARGS.test_camera })
+	if sys.platform == 'darwin':
+		listing = run_device_listing([ '-f', 'avfoundation', '-list_devices', 'true', '-i', '' ])
+		video_listing = listing.split('video devices:')[-1].split('audio devices:')[0]
+
+		for index, name in re.findall(r'\[(\d+)\] (.+)$', video_listing, re.M):
+			if not name.startswith('Capture screen'):
+				cameras.append({ 'name': name.strip(), 'kind': 'avfoundation', 'device': index + ':none' })
+	elif sys.platform == 'win32':
+		listing = run_device_listing([ '-f', 'dshow', '-list_devices', 'true', '-i', 'dummy' ])
+
+		for name in re.findall(r'"(.+?)" \(video\)', listing):
+			cameras.append({ 'name': name, 'kind': 'dshow', 'device': 'video=' + name })
+	else:
+		for device_path in sorted(Path('/sys/class/video4linux').glob('video*')):
+			# a camera exposes several nodes, the first one carries the picture
+			if (device_path / 'index').is_file() and (device_path / 'index').read_text().strip() == '0':
+				cameras.append({ 'name': (device_path / 'name').read_text().strip(), 'kind': 'v4l2', 'device': '/dev/' + device_path.name })
+	return [ camera for camera in cameras if camera.get('name') not in VIRTUAL_CAMERA_NAMES ]
+
+
+def run_device_listing(arguments : List[str]) -> str:
+	try:
+		completed = subprocess.run([ 'ffmpeg', '-hide_banner', '-nostdin' ] + arguments, capture_output = True, text = True, timeout = 10)
+	except (OSError, subprocess.TimeoutExpired):
+		return ''
+	return completed.stderr
+
+
+def create_camera_command(camera : Dict[str, Any], mode : Optional[Tuple[float, int, int]]) -> List[str]:
+	width, height = LIVE_FRAME_SIZE
+	command = [ 'ffmpeg', '-hide_banner', '-nostdin', '-loglevel', 'error' ]
+
+	if camera.get('kind') == 'file':
+		command.extend([ '-re', '-stream_loop', '-1' ])
+	else:
+		if mode:
+			command.extend([ '-framerate', str(mode[0]), '-video_size', str(mode[1]) + 'x' + str(mode[2]) ])
+		command.extend([ '-f', camera.get('kind') ])
+	# every camera ends up as the same picture size, filled edge to edge
+	command.extend([ '-i', camera.get('device'), '-an', '-vf', 'scale=' + str(width) + ':' + str(height) + ':force_original_aspect_ratio=increase,crop=' + str(width) + ':' + str(height), '-pix_fmt', 'bgr24', '-f', 'rawvideo', '-' ])
+	return command
+
+
+def pick_camera_mode(errors : str) -> Optional[Tuple[float, int, int]]:
+	# a Mac camera refuses an unsupported size or frame rate and lists the ones it has instead
+	modes = [ (int(width), int(height), float(rate_min), float(rate_max)) for width, height, rate_min, rate_max in re.findall(r'(\d+)x(\d+)@\[([\d.]+) ([\d.]+)\]fps', errors) ]
+	modes = [ mode for mode in modes if mode[3] >= 24 ] or [ mode for mode in modes if mode[3] >= 15 ] or modes
+
+	if modes:
+		width, height, rate_min, rate_max = min(modes, key = lambda mode: (mode[1] < LIVE_FRAME_SIZE[1], abs(mode[0] / mode[1] - LIVE_FRAME_SIZE[0] / LIVE_FRAME_SIZE[1]) > 0.01, abs(mode[1] - LIVE_FRAME_SIZE[1]), -mode[3]))
+		return min(rate_max, max(rate_min, LIVE_FPS)), width, height
+	return None
+
+
+def start_camera(camera : Dict[str, Any]) -> None:
+	with CAMERA_LOCK:
+		stop_camera()
+		generation = CAMERA.get('generation')
+		modes : List[Optional[Tuple[float, int, int]]] = [ (LIVE_FPS, LIVE_FRAME_SIZE[0], LIVE_FRAME_SIZE[1]) ]
+
+		while modes:
+			mode = modes.pop(0)
+			process = subprocess.Popen(create_camera_command(camera, mode), stdout = subprocess.PIPE, stderr = subprocess.PIPE)
+			errors : List[str] = []
+			threading.Thread(target = lambda: errors.extend(line.decode('utf-8', 'replace') for line in process.stderr), daemon = True).start()
+			threading.Thread(target = read_camera, args = (process, generation), daemon = True).start()
+
+			# macOS asks for the camera permission on the first try, the frames only come once it is given
+			with CAMERA_CONDITION:
+				CAMERA_CONDITION.wait_for(lambda: CAMERA.get('input_index') > 0 or process.poll() is not None, LIVE_START_TIMEOUT)
+
+			if CAMERA.get('input_index') > 0:
+				CAMERA.update({ 'running': True, 'name': camera.get('name'), 'process': process, 'error': None, 'output_times': [], 'alone_since': time.monotonic() })
+				threading.Thread(target = run_camera_pipeline, args = (generation,), daemon = True).start()
+				break
+			stop_process(process)
+
+			if mode:
+				modes.append(pick_camera_mode(''.join(errors)) if camera.get('kind') == 'avfoundation' else None)
+				modes = [ next_mode for next_mode in modes if next_mode != mode ]
+
+			if not modes or modes == [ None ] and camera.get('kind') == 'avfoundation':
+				logger.error(''.join(errors).strip() or 'no frame from ' + camera.get('name'), __name__)
+				raise HTTPException(503, 'error.camera_failed')
+
+
+def stop_camera(error : Optional[str] = None) -> None:
+	with CAMERA_LOCK:
+		process = CAMERA.get('process')
+		CAMERA.update({ 'generation': CAMERA.get('generation') + 1, 'running': False, 'process': None, 'input': None, 'input_index': 0, 'output': None, 'error': error })
+		close_virtual_camera()
+
+		if process:
+			stop_process(process)
+	with CAMERA_CONDITION:
+		CAMERA_CONDITION.notify_all()
+
+
+def stop_process(process : subprocess.Popen) -> None:
+	process.terminate()
+
+	try:
+		process.wait(timeout = 2)
+	except subprocess.TimeoutExpired:
+		process.kill()
+
+
+def read_camera(process : subprocess.Popen, generation : int) -> None:
+	width, height = LIVE_FRAME_SIZE
+	frame_size = width * height * 3
+
+	while CAMERA.get('generation') == generation:
+		frame_bytes = process.stdout.read(frame_size)
+
+		if len(frame_bytes) < frame_size:
+			break
+		with CAMERA_CONDITION:
+			CAMERA['input'] = numpy.frombuffer(bytearray(frame_bytes), numpy.uint8).reshape(height, width, 3)
+			CAMERA['input_index'] += 1
+			CAMERA_CONDITION.notify_all()
+
+	# a camera that goes away on its own (unplugged, taken by another app) ends the stream
+	with CAMERA_LOCK:
+		if CAMERA.get('generation') == generation and CAMERA.get('running'):
+			stop_camera('error.camera_lost')
+
+
+def run_camera_pipeline(generation : int) -> None:
+	pending : Deque[Future] = deque()
+	input_index = 0
+
+	while CAMERA.get('generation') == generation:
+		# each camera frame goes to the engine once, as soon as a worker is free, and results leave in their order
+		if len(pending) < LIVE_IN_FLIGHT:
+			with CAMERA_CONDITION:
+				CAMERA_CONDITION.wait_for(lambda: CAMERA.get('input_index') != input_index or CAMERA.get('generation') != generation, 0.005 if pending else 0.5)
+				camera_frame = CAMERA.get('input') if CAMERA.get('input_index') != input_index else None
+				input_index = CAMERA.get('input_index')
+
+			if camera_frame is not None:
+				pending.append(LIVE_WORKERS.submit(process_camera_frame, camera_frame))
+				continue
+		if pending:
+			try:
+				output = pending[0].result(timeout = 0.005)
+			except FutureTimeoutError:
+				continue
+			except Exception as exception:
+				pending.popleft()
+				logger.error(repr(exception), __name__)
+				continue
+			pending.popleft()
+			publish_camera_output(output, generation)
+
+		if not CAMERA.get('viewers') and not CAMERA.get('virtual_camera') and time.monotonic() - CAMERA.get('alone_since') > LIVE_IDLE_TIMEOUT:
+			with CAMERA_LOCK:
+				if CAMERA.get('generation') == generation:
+					stop_camera()
+
+
+def process_camera_frame(vision_frame : VisionFrame) -> Dict[str, Any]:
+	started = time.perf_counter()
+	output_frame, faces = vision_frame, []
+
+	if is_live() and TASK.get('status') != 'running':
+		LIVE['frame'] = vision_frame
+		output_frame, faces = process_live_frame(vision_frame)
+	return { 'original': vision_frame, 'result': numpy.ascontiguousarray(output_frame), 'faces': faces, 'flagged': bool(LIVE.get('flagged')), 'ms': round((time.perf_counter() - started) * 1000) }
+
+
+def publish_camera_output(output : Dict[str, Any], generation : int) -> None:
+	now = time.monotonic()
+
+	with CAMERA_CONDITION:
+		if CAMERA.get('generation') == generation:
+			CAMERA['output_times'] = [ output_time for output_time in CAMERA.get('output_times') if now - output_time < 1 ] + [ now ]
+			output.update({ 'index': (CAMERA.get('output') or {}).get('index', 0) + 1, 'fps': len(CAMERA.get('output_times')) })
+			CAMERA['output'] = output
+			CAMERA_CONDITION.notify_all()
+
+
+def wait_camera_output(output_index : int) -> Optional[Dict[str, Any]]:
+	with CAMERA_CONDITION:
+		CAMERA_CONDITION.wait_for(lambda: not CAMERA.get('running') or (CAMERA.get('output') or {}).get('index', output_index) != output_index, 1.0)
+		output = CAMERA.get('output')
+	return output if output and output.get('index') != output_index else None
+
+
+def encode_camera_output(output : Dict[str, Any], views : List[str]) -> List[bytes]:
+	return [ cv2.imencode('.jpg', output.get(view), [ cv2.IMWRITE_JPEG_QUALITY, 82 ])[1].tobytes() for view in views ]
+
+
+def count_camera_viewer(delta : int) -> None:
+	# only the event loop counts the windows, it must never wait on the camera lock
+	CAMERA['viewers'] = max(0, CAMERA.get('viewers') + delta)
+
+	if not CAMERA.get('viewers'):
+		CAMERA['alone_since'] = time.monotonic()
+
+
+def open_virtual_camera() -> None:
+	try:
+		import pyvirtualcam
+	except ImportError:
+		raise HTTPException(503, 'error.virtual_camera_module')
+
+	width, height = LIVE_FRAME_SIZE
+
+	try:
+		virtual_camera = pyvirtualcam.Camera(width, height, LIVE_FPS, fmt = pyvirtualcam.PixelFormat.BGR)
+	except RuntimeError as exception:
+		logger.error(str(exception), __name__)
+		raise HTTPException(503, 'error.virtual_camera_missing' if 'not installed' in str(exception) else 'error.virtual_camera_busy')
+
+	virtual_thread = threading.Thread(target = run_virtual_camera, args = (virtual_camera,), daemon = True)
+	CAMERA.update({ 'virtual_camera': virtual_camera, 'virtual_thread': virtual_thread })
+	virtual_thread.start()
+
+
+def close_virtual_camera() -> None:
+	virtual_thread = CAMERA.get('virtual_thread')
+	CAMERA.update({ 'virtual_camera': None, 'virtual_thread': None })
+
+	# the device only allows one sender: the previous one must be gone before another opens
+	if virtual_thread and virtual_thread is not threading.current_thread():
+		virtual_thread.join(timeout = 2)
+
+
+def run_virtual_camera(virtual_camera : Any) -> None:
+	width, height = LIVE_FRAME_SIZE
+	black_frame = numpy.zeros((height, width, 3), numpy.uint8)
+
+	# meeting apps expect a steady frame rate: the latest result is repeated until the next one is ready
+	with virtual_camera:
+		while CAMERA.get('virtual_camera') is virtual_camera:
+			output = CAMERA.get('output')
+			virtual_camera.send(output.get('result') if output else black_frame)
+			virtual_camera.sleep_until_next_frame()
+
+
+@app.get('/api/live/cameras')
+def get_cameras() -> Dict[str, Any]:
+	if CLI_ARGS.remote:
+		raise HTTPException(404, 'error.live_unavailable')
+	return { 'cameras': [ { 'name': camera.get('name') } for camera in list_cameras() ] }
+
+
 @app.post('/api/live/start')
 def start_live(payload : LivePayload) -> Dict[str, Any]:
 	ensure_idle()
 
-	# a shared server would stream every visitor's camera into one session
+	# a shared server would stream its own camera to every visitor
 	if CLI_ARGS.remote:
 		raise HTTPException(404, 'error.live_unavailable')
+	cameras = list_cameras()
+	camera = next((camera for camera in cameras if camera.get('name') == payload.camera), cameras[0] if cameras else None)
+
+	if not camera:
+		raise HTTPException(404, 'error.camera_none')
+	start_camera(camera)
 
 	with ENGINE_LOCK:
 		# a camera restarted after a pause keeps its people and their sources
 		if not is_live():
 			SESSION.update({ 'target': { 'id': uuid.uuid4().hex[:8], 'type': 'live', 'name': 'camera', 'path': None, 'frame_total': 1, 'fps': None }, 'people': [], 'trim': [ None, None ], 'output': None })
-		SESSION.get('target').update({ 'width': max(16, payload.width), 'height': max(16, payload.height) })
+		SESSION.get('target').update({ 'width': LIVE_FRAME_SIZE[0], 'height': LIVE_FRAME_SIZE[1] })
 		LIVE.update({ 'frame': None, 'faces': {}, 'seen': {}, 'flagged': False, 'checked_at': 0.0 })
 		clear_static_faces()
 		apply_settings()
 
 		if not ensure_models(collect_wanted_processors()):
+			stop_camera()
 			raise HTTPException(503, 'error.model_download')
+	session = serialize_session()
+
+	if CAMERA.get('virtual_wanted'):
+		try:
+			open_virtual_camera()
+		except HTTPException as exception:
+			CAMERA['virtual_wanted'] = False
+			session['live'] = dict(serialize_live(), notice = exception.detail)
+	return session
+
+
+@app.post('/api/live/stop')
+def stop_live() -> Dict[str, Any]:
+	stop_camera()
+	return serialize_session()
+
+
+@app.post('/api/live/virtual-camera')
+def toggle_virtual_camera(payload : VirtualCameraPayload) -> Dict[str, Any]:
+	if CLI_ARGS.remote:
+		raise HTTPException(404, 'error.live_unavailable')
+
+	with CAMERA_LOCK:
+		close_virtual_camera()
+
+		# the wish is kept while the camera is off, the device only exists while it runs
+		if payload.enabled and CAMERA.get('running'):
+			open_virtual_camera()
+		CAMERA['virtual_wanted'] = payload.enabled
 	return serialize_session()
 
 
@@ -1376,41 +1714,39 @@ def start_live(payload : LivePayload) -> Dict[str, Any]:
 async def live_stream(websocket : WebSocket) -> None:
 	await websocket.accept()
 	loop = asyncio.get_running_loop()
-	results : asyncio.Queue = asyncio.Queue()
+	views = [ 'result' ]
 
-	# frames are processed side by side but always sent back in the order they came
-	async def send_results() -> None:
+	# the page says which pictures it shows: the result, the untouched camera, or both side by side
+	async def receive_views() -> None:
 		while True:
-			details, frame_bytes = await (await results.get())
-			await websocket.send_text(json.dumps(details))
-			await websocket.send_bytes(frame_bytes)
+			message = json.loads(await websocket.receive_text())
+			views[:] = [ view for view in [ 'original', 'result' ] if view in message.get('views', []) ]
 
-	sender = asyncio.create_task(send_results())
+	receiver = asyncio.create_task(receive_views())
+	count_camera_viewer(1)
+	output_index = 0
 
 	try:
-		while True:
-			camera_bytes = await websocket.receive_bytes()
-			await results.put(loop.run_in_executor(LIVE_WORKERS, process_live_bytes, camera_bytes))
-	except WebSocketDisconnect:
+		while not receiver.done():
+			output = await loop.run_in_executor(None, wait_camera_output, output_index)
+
+			if output is None:
+				if not CAMERA.get('running'):
+					await websocket.send_text(json.dumps({ 'stopped': True, 'error': CAMERA.get('error') }))
+					break
+				continue
+			output_index = output.get('index')
+			sent_views = list(views)
+			frames_bytes = await loop.run_in_executor(None, encode_camera_output, output, sent_views)
+			await websocket.send_text(json.dumps({ 'faces': output.get('faces'), 'flagged': output.get('flagged'), 'ms': output.get('ms'), 'fps': output.get('fps'), 'views': sent_views }))
+
+			for frame_bytes in frames_bytes:
+				await websocket.send_bytes(frame_bytes)
+	except (WebSocketDisconnect, RuntimeError):
 		pass
 	finally:
-		sender.cancel()
-
-
-def process_live_bytes(camera_bytes : bytes) -> Tuple[Dict[str, Any], bytes]:
-	vision_frame = cv2.imdecode(numpy.frombuffer(camera_bytes, numpy.uint8), cv2.IMREAD_COLOR)
-
-	if vision_frame is None:
-		return { 'faces': [], 'flagged': False }, b''
-	output_frame, faces = vision_frame, []
-
-	started = time.perf_counter()
-
-	if is_live() and TASK.get('status') != 'running':
-		LIVE['frame'] = vision_frame
-		output_frame, faces = process_live_frame(vision_frame)
-	_, buffer = cv2.imencode('.jpg', output_frame, [ cv2.IMWRITE_JPEG_QUALITY, 85 ])
-	return { 'faces': faces, 'flagged': bool(LIVE.get('flagged')), 'ms': round((time.perf_counter() - started) * 1000) }, buffer.tobytes()
+		receiver.cancel()
+		count_camera_viewer(-1)
 
 
 def check_live_content() -> None:
