@@ -1,4 +1,5 @@
 from argparse import ArgumentParser
+from functools import lru_cache
 from typing import Callable, Dict, List, NamedTuple, Optional, Tuple
 
 import cv2
@@ -27,6 +28,7 @@ FACE_FILTER_SET : Dict[str, str] =\
 	'swirl': 'shape',
 	'cyclops': 'shape',
 	'upside_down': 'shape',
+	'potato': 'head',
 	'hair_pink': 'hair',
 	'hair_blue': 'hair',
 	'hair_green': 'hair',
@@ -41,7 +43,8 @@ FACE_FILTER_SET : Dict[str, str] =\
 	'demon_eyes': 'prop',
 	'blush': 'prop',
 	'moustache': 'prop',
-	'pixel_glasses': 'prop'
+	'pixel_glasses': 'prop',
+	'bow': 'prop'
 }
 FACE_FILTER_MULTIPLE_GROUPS = [ 'prop' ]
 # rgb colour and how much light is added first: dark hair takes no colour without it
@@ -73,6 +76,20 @@ PIXEL_GLASSES =\
 ]
 # right half of the moustache in eye distances from its center, the left half is mirrored
 MOUSTACHE_OUTLINE = [ (0.0, -0.06), (0.14, -0.12), (0.3, -0.1), (0.44, -0.03), (0.56, -0.02), (0.66, -0.1), (0.72, -0.22), (0.68, -0.32), (0.6, -0.3), (0.63, -0.2), (0.58, -0.1), (0.48, 0.08), (0.33, 0.14), (0.18, 0.14), (0.07, 0.1), (0.0, 0.06) ]
+# the new head in sizes of the detected face box, which keeps its size when the head turns (the eye distance does not)
+HEAD_WIDTH, HEAD_HEIGHT, HEAD_LIFT = 1.29, 1.73, 0.075
+# the features kept on a new head, in eye distances: center offset from the feature, then half width and half height
+HEAD_FEATURES = [ ('left_eye', 0.0, 0.0, 0.36, 0.22), ('right_eye', 0.0, 0.0, 0.36, 0.22), ('mouth', 0.0, 0.04, 0.6, 0.3) ]
+# a distortion enlarges some features first: the new head shows them whole
+HEAD_FEATURE_ZOOMS : Dict[str, Dict[str, float]] =\
+{
+	'big_eyes': { 'left_eye': 1.6, 'right_eye': 1.6 },
+	'big_mouth': { 'mouth': 1.4 },
+	'alien': { 'left_eye': 1.6, 'right_eye': 1.6 },
+	'baby': { 'left_eye': 1.6, 'right_eye': 1.6, 'mouth': 0.8 }
+}
+# right loop of the bow in bow radii from its knot, the left loop is mirrored
+BOW_LOOP_OUTLINE = [ (0.12, -0.1), (0.42, -0.38), (0.72, -0.58), (0.9, -0.6), (0.99, -0.42), (1.02, -0.1), (1.0, 0.18), (0.94, 0.46), (0.82, 0.58), (0.62, 0.5), (0.38, 0.32), (0.12, 0.1) ]
 
 
 class FaceGeometry(NamedTuple):
@@ -84,6 +101,9 @@ class FaceGeometry(NamedTuple):
 	axis_x : numpy.ndarray
 	axis_y : numpy.ndarray
 	unit : float
+	head_center : numpy.ndarray
+	head_width : float
+	head_height : float
 
 
 WarpMap = Callable[[numpy.ndarray, numpy.ndarray], Tuple[numpy.ndarray, numpy.ndarray]]
@@ -159,7 +179,10 @@ def create_face_geometry(face : Face) -> FaceGeometry:
 	unit = max(float(numpy.linalg.norm(eye_vector)), 1.0)
 	axis_x = eye_vector / unit
 	axis_y = numpy.array([ -axis_x[1], axis_x[0] ], dtype = numpy.float32)
-	return FaceGeometry(left_eye, right_eye, nose, (face_landmark_5[3] + face_landmark_5[4]) / 2, (left_eye + right_eye) / 2, axis_x, axis_y, unit)
+	start_x, start_y, end_x, end_y = face.bounding_box
+	face_size = float(max(end_x - start_x, end_y - start_y))
+	head_center = numpy.array([ (start_x + end_x) / 2, (start_y + end_y) / 2 ], dtype = numpy.float32) - axis_y * face_size * HEAD_LIFT
+	return FaceGeometry(left_eye, right_eye, nose, (face_landmark_5[3] + face_landmark_5[4]) / 2, (left_eye + right_eye) / 2, axis_x, axis_y, unit, head_center, face_size * HEAD_WIDTH, face_size * HEAD_HEIGHT)
 
 
 def to_frame_point(geometry : FaceGeometry, origin : numpy.ndarray, offset_x : float, offset_y : float) -> numpy.ndarray:
@@ -453,6 +476,119 @@ def apply_colours(temp_vision_frame : VisionFrame, face : Face, geometry : FaceG
 	return temp_vision_frame
 
 
+# ---------------------------------------------------------------- new heads
+
+@lru_cache(maxsize = 1)
+def create_potato_texture() -> Tuple[numpy.ndarray, numpy.ndarray]:
+	# drawn once with a fixed seed: every person gets the same potato
+	texture_width = 768
+	texture_height = round(texture_width * HEAD_HEIGHT / HEAD_WIDTH)
+	texture_scale = texture_width / 600
+	random_generator = numpy.random.default_rng(11)
+	grid_y, grid_x = numpy.mgrid[0:texture_height, 0:texture_width].astype(numpy.float32)
+	normal_x, normal_y = (grid_x - texture_width / 2) / (texture_width / 2), (grid_y - texture_height / 2) / (texture_height / 2)
+	angle = numpy.arctan2(normal_y, normal_x)
+	# a lumpy outline rather than a perfect egg
+	outline = 0.93 + 0.03 * numpy.sin(3 * angle + 1.3) + 0.025 * numpy.sin(5 * angle + 0.4) + 0.02 * numpy.sin(2 * angle + 2.1)
+	distance = numpy.sqrt(normal_x ** 2 + normal_y ** 2) / outline
+	texture_alpha = numpy.clip((1 - distance) * texture_width / 3, 0, 1)
+
+	def create_noise(cell_size : float) -> numpy.ndarray:
+		cell_size *= texture_scale
+		noise = random_generator.random((max(2, int(texture_height / cell_size)), max(2, int(texture_width / cell_size)))).astype(numpy.float32)
+		return cv2.resize(noise, (texture_width, texture_height), interpolation = cv2.INTER_CUBIC)
+
+	# the skin is lit like a ball, its bumps bend the light
+	bumps = create_noise(90) * 0.45 + create_noise(30) * 0.35 + create_noise(9) * 0.2
+	depth = numpy.sqrt(1 - numpy.clip(distance, 0, 0.999) ** 2)
+	bump_x = cv2.Sobel(bumps, cv2.CV_32F, 1, 0, ksize = 5) * texture_scale / 14
+	bump_y = cv2.Sobel(bumps, cv2.CV_32F, 0, 1, ksize = 5) * texture_scale / 14
+	normal = numpy.dstack([ normal_x / outline - bump_x, normal_y / outline - bump_y, depth * 1.4 ])
+	normal /= numpy.linalg.norm(normal, axis = 2, keepdims = True)
+	light = numpy.array([ -0.45, -0.55, 0.7 ], dtype = numpy.float32)
+	shade = (0.32 + 0.8 * numpy.clip(normal @ (light / numpy.linalg.norm(light)), 0, 1)) * (0.6 + 0.4 * depth ** 0.6)
+
+	tint = create_noise(140)
+	dirt = create_noise(45)
+	texture_frame = numpy.dstack([ 62 + 26 * tint, 104 + 22 * tint, 150 + 14 * tint ]) * (0.82 + 0.3 * dirt)[:, :, None]
+	speckles = (create_noise(2.5) > 0.86) * 0.18 + (create_noise(4) > 0.9) * 0.12
+	texture_frame *= (1 - speckles)[:, :, None]
+
+	# the potato's own eyes: small dark pits with a lighter rim
+	for _ in range(13):
+		spot_x, spot_y = random_generator.uniform(0.12, 0.88) * texture_width, random_generator.uniform(0.08, 0.92) * texture_height
+		spot_width, spot_height = random_generator.uniform(5, 11) * texture_scale, random_generator.uniform(3, 7) * texture_scale
+		spot_angle = random_generator.uniform(0, numpy.pi)
+		delta_x, delta_y = grid_x - spot_x, grid_y - spot_y
+		spot_u = (delta_x * numpy.cos(spot_angle) + delta_y * numpy.sin(spot_angle)) / spot_width
+		spot_v = (delta_y * numpy.cos(spot_angle) - delta_x * numpy.sin(spot_angle)) / spot_height
+		spot_distance = numpy.sqrt(spot_u ** 2 + spot_v ** 2)
+		texture_frame *= (1 - 0.55 * (1 - smoothstep(0.5, 1.3, spot_distance)))[:, :, None]
+		texture_frame *= (1 + 0.12 * (smoothstep(1.1, 1.6, spot_distance) - smoothstep(1.6, 2.4, spot_distance)))[:, :, None]
+	return (texture_frame * shade[:, :, None]).clip(0, 255).astype(numpy.float32), texture_alpha
+
+
+def create_feature_mask(temp_vision_frame : VisionFrame, region : Tuple[int, int, int, int], geometry : FaceGeometry, feature_zooms : Dict[str, float]) -> numpy.ndarray:
+	start_x, start_y, end_x, end_y = region
+	feature_mask = numpy.zeros((end_y - start_y, end_x - start_x), dtype = numpy.float32)
+
+	for feature_name, offset_x, offset_y, half_width, half_height in HEAD_FEATURES:
+		feature_zoom = feature_zooms.get(feature_name, 1.0)
+		half_width, half_height = half_width * feature_zoom, half_height * feature_zoom
+		feature_center = to_frame_point(geometry, getattr(geometry, feature_name), offset_x, offset_y)
+		feature_region = calculate_region(temp_vision_frame, feature_center, half_width * geometry.unit + 1)
+
+		if feature_region:
+			feature_start_x, feature_start_y = max(feature_region[0], start_x), max(feature_region[1], start_y)
+			feature_end_x, feature_end_y = min(feature_region[2], end_x), min(feature_region[3], end_y)
+
+			if feature_end_x > feature_start_x and feature_end_y > feature_start_y:
+				grid_x, grid_y = create_region_grid((feature_start_x, feature_start_y, feature_end_x, feature_end_y))
+				face_x, face_y = to_face_coordinates(geometry, feature_center, grid_x, grid_y)
+				distance = numpy.sqrt((face_x / (half_width * geometry.unit)) ** 2 + (face_y / (half_height * geometry.unit)) ** 2)
+				feature_crop = feature_mask[feature_start_y - start_y:feature_end_y - start_y, feature_start_x - start_x:feature_end_x - start_x]
+				numpy.maximum(feature_crop, 1 - smoothstep(0.55, 1, distance), out = feature_crop)
+	return feature_mask
+
+
+def paste_head(temp_vision_frame : VisionFrame, geometry : FaceGeometry, head_frame : numpy.ndarray, head_alpha : numpy.ndarray, feature_zooms : Dict[str, float]) -> VisionFrame:
+	half_width_vector = geometry.axis_x * geometry.head_width / 2
+	half_height_vector = geometry.axis_y * geometry.head_height / 2
+	corners = numpy.array([ geometry.head_center + side_x * half_width_vector + side_y * half_height_vector for side_x in (-1, 1) for side_y in (-1, 1) ])
+	frame_height, frame_width = temp_vision_frame.shape[:2]
+	start_x, start_y = max(0, int(corners[:, 0].min())), max(0, int(corners[:, 1].min()))
+	end_x, end_y = min(frame_width, int(corners[:, 0].max()) + 2), min(frame_height, int(corners[:, 1].max()) + 2)
+
+	if end_x <= start_x or end_y <= start_y:
+		return temp_vision_frame
+	head_height, head_width = head_frame.shape[:2]
+	scale = geometry.head_width / head_width
+	affine_matrix = numpy.array(
+	[
+		[ geometry.axis_x[0] * scale, geometry.axis_y[0] * scale, 0 ],
+		[ geometry.axis_x[1] * scale, geometry.axis_y[1] * scale, 0 ]
+	], dtype = numpy.float32)
+	affine_matrix[:, 2] = geometry.head_center - [ start_x, start_y ] - affine_matrix[:, :2] @ [ head_width / 2, head_height / 2 ]
+	region_size = (end_x - start_x, end_y - start_y)
+	warp_frame = cv2.warpAffine(head_frame, affine_matrix, region_size, flags = cv2.INTER_LINEAR)
+	warp_alpha = cv2.warpAffine(head_alpha, affine_matrix, region_size, flags = cv2.INTER_LINEAR)
+	region = (start_x, start_y, end_x, end_y)
+	# the person's own eyes and mouth stay on the new head: they blink and talk on it
+	warp_alpha *= 1 - create_feature_mask(temp_vision_frame, region, geometry, feature_zooms)
+	return blend_region(temp_vision_frame.copy(), region, warp_frame, warp_alpha)
+
+
+def paste_potato(temp_vision_frame : VisionFrame, geometry : FaceGeometry, feature_zooms : Dict[str, float]) -> VisionFrame:
+	potato_frame, potato_alpha = create_potato_texture()
+	return paste_head(temp_vision_frame, geometry, potato_frame, potato_alpha, feature_zooms)
+
+
+HEAD_PAINTERS : Dict[str, Callable[[VisionFrame, FaceGeometry, Dict[str, float]], VisionFrame]] =\
+{
+	'potato': paste_potato
+}
+
+
 # ---------------------------------------------------------------- drawn props
 
 def draw_clown_nose(temp_vision_frame : VisionFrame, geometry : FaceGeometry) -> VisionFrame:
@@ -559,28 +695,77 @@ def draw_pixel_glasses(temp_vision_frame : VisionFrame, geometry : FaceGeometry)
 	return blend_region(temp_vision_frame.copy(), region, warp_frame[:, :, :3] / numpy.maximum(alpha, 1e-3)[:, :, None], alpha)
 
 
+def draw_bow(temp_vision_frame : VisionFrame, geometry : FaceGeometry) -> VisionFrame:
+	# on the top right of the hair, which puts it on the top right of a new head too
+	bow_radius = geometry.head_width * 0.22
+	bow_center = geometry.head_center + geometry.axis_x * geometry.head_width * 0.24 - geometry.axis_y * geometry.head_height * 0.28
+	region = calculate_region(temp_vision_frame, bow_center, bow_radius * 1.2)
+
+	if not region:
+		return temp_vision_frame
+	start_x, start_y, end_x, end_y = region
+	tilt = numpy.radians(18)
+	bow_axis_x = geometry.axis_x * numpy.cos(tilt) + geometry.axis_y * numpy.sin(tilt)
+	bow_axis_y = numpy.array([ -bow_axis_x[1], bow_axis_x[0] ], dtype = numpy.float32)
+	loop_mask = numpy.zeros((end_y - start_y, end_x - start_x), dtype = numpy.uint8)
+
+	for side in (-1, 1):
+		points = numpy.array([ bow_center + (bow_axis_x * side * point_x + bow_axis_y * point_y) * bow_radius for point_x, point_y in BOW_LOOP_OUTLINE ])
+		cv2.fillPoly(loop_mask, [ numpy.round((points - [ start_x, start_y ]) * 16).astype(numpy.int32) ], 255, cv2.LINE_AA, 4)
+	grid_x, grid_y = create_region_grid(region)
+	delta_x, delta_y = grid_x - bow_center[0], grid_y - bow_center[1]
+	bow_x = numpy.abs(delta_x * bow_axis_x[0] + delta_y * bow_axis_x[1]) / bow_radius
+	bow_y = (delta_x * bow_axis_y[0] + delta_y * bow_axis_y[1]) / bow_radius
+
+	# the ribbon gathers in the knot and folds twice on its way out, the rim and the bottom fall in the shade
+	fold = numpy.exp(-((bow_y - 0.3 * bow_x) / 0.07) ** 2) + numpy.exp(-((bow_y + 0.3 * bow_x) / 0.07) ** 2)
+	edge_distance = cv2.distanceTransform((loop_mask > 127).astype(numpy.uint8), cv2.DIST_L2, 3) / bow_radius
+	loop_shade = (0.74 + 0.3 * smoothstep(0.1, 0.7, bow_x)) * (1 - 0.16 * fold * smoothstep(0.2, 0.5, bow_x))
+	loop_shade *= (0.78 + 0.22 * smoothstep(0, 0.09, edge_distance)) * (1 + 0.12 * smoothstep(0, 0.5, -bow_y))
+	knot_distance = numpy.sqrt((bow_x / 0.2) ** 2 + (bow_y / 0.27) ** 2)
+	knot_alpha = numpy.clip((1 - knot_distance) * bow_radius * 0.2, 0, 1)
+	knot_shade = 0.8 + 0.3 * numpy.clip(1 - knot_distance, 0, 1) + 0.1 * smoothstep(0, 0.2, -bow_y)
+	shade = loop_shade * (1 - knot_alpha) + knot_shade * knot_alpha
+	bow_frame = numpy.array([ 225, 135, 228 ], dtype = numpy.float32)[None, None] * shade[:, :, None]
+	return blend_region(temp_vision_frame.copy(), region, bow_frame, numpy.maximum(loop_mask.astype(numpy.float32) / 255, knot_alpha))
+
+
 PROP_PAINTERS : Dict[str, Callable[[VisionFrame, FaceGeometry], VisionFrame]] =\
 {
 	'clown_nose': draw_clown_nose,
 	'demon_eyes': draw_demon_eyes,
 	'blush': draw_blush,
 	'moustache': draw_moustache,
-	'pixel_glasses': draw_pixel_glasses
+	'pixel_glasses': draw_pixel_glasses,
+	'bow': draw_bow
 }
+
+
+def apply_props(temp_vision_frame : VisionFrame, geometry : FaceGeometry, face_filters : List[str]) -> VisionFrame:
+	for face_filter in face_filters:
+		if face_filter in PROP_PAINTERS:
+			temp_vision_frame = PROP_PAINTERS.get(face_filter)(temp_vision_frame, geometry)
+	return temp_vision_frame
 
 
 def filter_face(temp_vision_frame : VisionFrame, face : Face, face_filters : List[str]) -> VisionFrame:
 	geometry = create_face_geometry(face)
+	head_filter = next((face_filter for face_filter in face_filters if face_filter in HEAD_PAINTERS), None)
 	# colours first, then the props, then the shape: a big head carries its red nose with it
 	temp_vision_frame = apply_colours(temp_vision_frame, face, geometry, face_filters)
 
-	for face_filter in face_filters:
-		if face_filter in PROP_PAINTERS:
-			temp_vision_frame = PROP_PAINTERS.get(face_filter)(temp_vision_frame, geometry)
+	if not head_filter:
+		temp_vision_frame = apply_props(temp_vision_frame, geometry, face_filters)
 
 	for face_filter in face_filters:
 		if FACE_FILTER_SET.get(face_filter) == 'shape':
 			temp_vision_frame = apply_shape(temp_vision_frame, geometry, face_filter)
+
+	# a new head takes the shaped eyes and mouth along, its props go on top of it
+	if head_filter:
+		shape_filter = next((face_filter for face_filter in face_filters if FACE_FILTER_SET.get(face_filter) == 'shape'), None)
+		temp_vision_frame = HEAD_PAINTERS.get(head_filter)(temp_vision_frame, geometry, HEAD_FEATURE_ZOOMS.get(shape_filter, {}))
+		temp_vision_frame = apply_props(temp_vision_frame, geometry, face_filters)
 	return temp_vision_frame
 
 

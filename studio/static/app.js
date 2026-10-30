@@ -1316,7 +1316,7 @@ function saveSticker(person, immediate)
 
 /* ------------------------------------------------------------ filters */
 
-const FILTER_GROUPS = [ 'shape', 'hair', 'skin', 'prop' ];
+const FILTER_GROUPS = [ 'shape', 'head', 'hair', 'skin', 'prop' ];
 
 // the colour chips show their colour
 const FILTER_SWATCHES =
