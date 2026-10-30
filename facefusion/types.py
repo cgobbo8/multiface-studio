@@ -54,7 +54,9 @@ FaceStickerOptions = TypedDict('FaceStickerOptions',
 	'follow_rotation' : bool,
 	'depth' : float,
 	'mirror' : bool,
-	'round' : bool
+	'round' : bool,
+	'inside' : bool,
+	'points' : Optional[List[List[float]]]
 })
 FaceMapping = TypedDict('FaceMapping',
 {

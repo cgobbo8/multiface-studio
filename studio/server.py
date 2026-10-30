@@ -66,6 +66,7 @@ from facefusion.args import apply_args
 from facefusion.audio import create_empty_audio_frame
 from facefusion.core import common_pre_check, conditional_process, processors_pre_check
 from facefusion.face_analyser import get_many_faces
+from facefusion.face_detector import detect_faces
 from facefusion.face_mapper import create_frame_key, interpolate_face, is_face_bridgeable, match_face_mappings
 from facefusion.face_store import clear_static_faces, get_face_store
 from facefusion.hash_helper import create_hash
@@ -90,6 +91,8 @@ PEOPLE_EXEMPLAR_LIMIT = 12
 PEOPLE_EXEMPLAR_SPREAD = 0.08
 VIDEO_SCAN_SAMPLES = 60
 STICKER_MAX_SIZE = 1024
+# a picture the person gets inside fills the whole view
+STICKER_WHOLE_MAX_SIZE = 1920
 STICKER_CUTOUT_MODEL = 'modnet'
 STICKER_DEFAULT_OPTIONS : Dict[str, Any] =\
 {
@@ -101,7 +104,8 @@ STICKER_DEFAULT_OPTIONS : Dict[str, Any] =\
 	'depth': 0.7,
 	'mirror': False,
 	'round': False,
-	'cutout': False
+	'cutout': False,
+	'inside': False
 }
 STICKER_OPTION_RANGES : Dict[str, Any] =\
 {
@@ -305,13 +309,15 @@ def build_face_mappings() -> List[FaceMapping]:
 			'reference_embeddings': person.get('embeddings'),
 			'source_paths': [ source.get('path') ] if source and not is_sticker else [],
 			'sticker_path': resolve_sticker_path(source, person.get('sticker')) if is_sticker else None,
-			'sticker_options': dict(person.get('sticker'), round = False) if is_sticker else None,
+			'sticker_options': dict(person.get('sticker'), round = False, points = source.get('points')) if is_sticker else None,
 			'filters': list(person.get('filters') or [])
 		})
 	return face_mappings
 
 
 def resolve_sticker_variant(library_item : Dict[str, Any], sticker_options : Dict[str, Any]) -> str:
+	if sticker_options.get('inside') and library_item.get('whole_path'):
+		return 'whole'
 	if sticker_options.get('cutout') and library_item.get('cutout_path'):
 		return 'cutout'
 	if sticker_options.get('round') and library_item.get('round_path'):
@@ -325,6 +331,12 @@ def resolve_sticker_path(library_item : Dict[str, Any], sticker_options : Dict[s
 	if sticker_variant == 'original':
 		return library_item.get('path')
 	return library_item.get(sticker_variant + '_path')
+
+
+def resolve_sticker_size(library_item : Dict[str, Any], sticker_options : Dict[str, Any]) -> List[int]:
+	if resolve_sticker_variant(library_item, sticker_options) == 'whole':
+		return library_item.get('whole_size')
+	return [ library_item.get('width'), library_item.get('height') ]
 
 
 def collect_source_paths() -> List[str]:
@@ -476,7 +488,8 @@ def serialize_session() -> Dict[str, Any]:
 			'source_thumbnail': source.get('thumbnail') if source else None,
 			'sticker': person.get('sticker') if is_sticker else None,
 			'sticker_image': '/api/library/' + source.get('id') + '/image?variant=' + resolve_sticker_variant(source, person.get('sticker')) if is_sticker else None,
-			'sticker_size': [ source.get('width'), source.get('height') ] if is_sticker else None,
+			'sticker_size': resolve_sticker_size(source, person.get('sticker')) if is_sticker else None,
+			'sticker_points': source.get('points') if is_sticker else None,
 			'filters': person.get('filters') or []
 		})
 
@@ -982,8 +995,16 @@ def update_sticker(person_id : int, payload : Dict[str, Any]) -> Dict[str, Any]:
 			if key in STICKER_OPTION_RANGES:
 				minimum, maximum = STICKER_OPTION_RANGES.get(key)
 				person['sticker'][key] = max(minimum, min(maximum, float(value)))
-			if key in [ 'follow_rotation', 'mirror', 'round', 'cutout' ]:
+			if key in [ 'follow_rotation', 'mirror', 'round', 'cutout', 'inside' ]:
 				person['sticker'][key] = bool(value)
+
+		source = find_library_item(person.get('source_id'))
+
+		# the points belong to the picture: every person put inside it finds them in place
+		if 'points' in payload:
+			source['points'] = normalize_picture_points(payload.get('points'))
+		if person.get('sticker').get('inside') and not source.get('points'):
+			source['points'] = detect_picture_points(source)
 
 		if person.get('sticker').get('cutout'):
 			source = find_library_item(person.get('source_id'))
@@ -994,6 +1015,39 @@ def update_sticker(person_id : int, payload : Dict[str, Any]) -> Dict[str, Any]:
 				raise HTTPException(503, 'error.cutout_failed')
 		apply_settings()
 	return serialize_session()
+
+
+def normalize_picture_points(points : Any) -> List[List[float]]:
+	try:
+		normalized_points = [ [ max(0.0, min(1.0, float(point[0]))), max(0.0, min(1.0, float(point[1]))) ] for point in points ]
+	except (TypeError, ValueError, IndexError):
+		raise HTTPException(422, 'error.invalid_points')
+
+	if len(normalized_points) != 3:
+		raise HTTPException(422, 'error.invalid_points')
+	return normalized_points
+
+
+def detect_picture_points(library_item : Dict[str, Any]) -> List[List[float]]:
+	picture_frame = face_sticker_core.read_sticker_frame.__wrapped__(library_item.get('whole_path') or library_item.get('path'))
+
+	if picture_frame is None:
+		return face_sticker_core.INSIDE_DEFAULT_POINTS
+	picture_height, picture_width = picture_frame.shape[:2]
+	face_detector_score = state_manager.get_item('face_detector_score')
+	# animals and drawings are far from what the detector learnt: a low bar, the points can be dragged anyway
+	state_manager.set_item('face_detector_score', 0.2)
+
+	try:
+		_, face_scores, face_landmarks_5 = detect_faces(numpy.ascontiguousarray(picture_frame[:, :, :3]))
+	finally:
+		state_manager.set_item('face_detector_score', face_detector_score)
+
+	if not face_scores:
+		return face_sticker_core.INSIDE_DEFAULT_POINTS
+	face_landmark_5 = face_landmarks_5[int(numpy.argmax(face_scores))]
+	mouth_point = (face_landmark_5[3] + face_landmark_5[4]) / 2
+	return [ [ round(float(point[0]) / picture_width, 4), round(float(point[1]) / picture_height, 4) ] for point in (face_landmark_5[0], face_landmark_5[1], mouth_point) ]
 
 
 def create_sticker_cutout(library_item : Dict[str, Any]) -> bool:
@@ -1148,6 +1202,7 @@ def create_sticker_item(upload : UploadFile) -> Optional[Dict[str, Any]]:
 		return None
 
 	has_alpha = bool((sticker_frame[:, :, 3] < 250).any())
+	whole_frame = sticker_frame
 
 	# a plain photo of someone is meant as their head, not the whole picture
 	if not has_alpha:
@@ -1164,6 +1219,15 @@ def create_sticker_item(upload : UploadFile) -> Optional[Dict[str, Any]]:
 	round_path = str(sticker_path).rsplit('.', 1)[0] + '.round.png'
 	cv2.imwrite(round_path, create_round_frame(sticker_frame))
 
+	# the whole picture is kept aside for the person who goes inside it
+	whole_height, whole_width = whole_frame.shape[:2]
+	whole_scale = min(1.0, STICKER_WHOLE_MAX_SIZE / max(whole_width, whole_height))
+
+	if whole_scale < 1:
+		whole_frame = cv2.resize(whole_frame, (round(whole_width * whole_scale), round(whole_height * whole_scale)), interpolation = cv2.INTER_AREA)
+	whole_path = str(sticker_path).rsplit('.', 1)[0] + '.whole.png'
+	cv2.imwrite(whole_path, whole_frame)
+
 	if sticker_path != upload_path:
 		upload_path.unlink(missing_ok = True)
 	return\
@@ -1173,6 +1237,8 @@ def create_sticker_item(upload : UploadFile) -> Optional[Dict[str, Any]]:
 		'name': Path(upload.filename or sticker_path.name).name,
 		'path': str(sticker_path),
 		'round_path': round_path,
+		'whole_path': whole_path,
+		'whole_size': [ whole_frame.shape[1], whole_frame.shape[0] ],
 		'thumbnail': create_sticker_thumbnail(sticker_frame),
 		'has_alpha': has_alpha,
 		'width': sticker_frame.shape[1],
@@ -1229,7 +1295,7 @@ def get_library_image(library_id : str, variant : str = 'original') -> FileRespo
 
 	if not library_item:
 		raise HTTPException(404, 'error.image_not_found')
-	if variant in [ 'round', 'cutout' ] and library_item.get(variant + '_path'):
+	if variant in [ 'round', 'cutout', 'whole' ] and library_item.get(variant + '_path'):
 		return FileResponse(library_item.get(variant + '_path'))
 	return FileResponse(library_item.get('path'))
 
@@ -1825,7 +1891,8 @@ def process_live_frame(vision_frame : VisionFrame) -> Tuple[VisionFrame, List[Di
 		LIVE_CONTENT_WORKER.submit(check_live_content)
 	temp_vision_frame = vision_frame.copy()
 	# without a known face only the style of the whole image applies, the face processors would detect again for nothing
-	processors = [ processor for processor in state_manager.get_item('processors') if pairs or processor == 'frame_filter' ]
+	# a picture the person is inside stays on screen when they step out of view
+	processors = [ processor for processor in state_manager.get_item('processors') if pairs or processor == 'frame_filter' or processor == 'face_sticker' and face_sticker_core.get_inside_mapping() ]
 
 	if LIVE.get('flagged'):
 		temp_vision_frame = obscure_frame(temp_vision_frame)

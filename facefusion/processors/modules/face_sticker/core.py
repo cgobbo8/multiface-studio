@@ -24,6 +24,10 @@ STICKER_PERSPECTIVE = 3.0
 # frames on each side averaged against jitter, never across a cut
 STICKER_TRACK_SMOOTHING = 1
 STICKER_TRACKS : Dict[int, numpy.ndarray] = {}
+# a picture the person gets inside: its left eye, right eye and mouth, in fractions of its size
+INSIDE_DEFAULT_POINTS = [ [ 0.4, 0.42 ], [ 0.6, 0.42 ], [ 0.5, 0.62 ] ]
+# the person's features lent to the picture, in their eye distances: point index, center shift down, half width, half height
+INSIDE_FEATURES = [ ('left_eye', 0, 0.0, 0.34, 0.21), ('right_eye', 1, 0.0, 0.34, 0.21), ('mouth', 2, 0.04, 0.6, 0.31) ]
 
 
 def get_inference_pool() -> InferencePool:
@@ -66,6 +70,7 @@ def post_process() -> None:
 	STICKER_TRACKS.clear()
 	clear_face_tracks()
 	read_sticker_frame.cache_clear()
+	create_inside_canvas.cache_clear()
 	prepare_sticker_frame.cache_clear()
 	read_static_image.cache_clear()
 	read_static_video_frame.cache_clear()
@@ -200,17 +205,113 @@ def paste_mapping_sticker(temp_vision_frame : VisionFrame, sticker_anchor : Face
 	return paste_sticker(temp_vision_frame, sticker_anchor, sticker_frame, sticker_options)
 
 
+def is_inside_mapping(face_mapping : FaceMapping) -> bool:
+	return bool(face_mapping.get('sticker_path') and (face_mapping.get('sticker_options') or {}).get('inside'))
+
+
+def get_inside_mapping() -> Optional[FaceMapping]:
+	return next((face_mapping for face_mapping in get_face_mappings() if is_inside_mapping(face_mapping)), None)
+
+
+@lru_cache(maxsize = 8)
+def create_inside_canvas(sticker_path : str, frame_width : int, frame_height : int) -> Optional[Tuple[VisionFrame, float, int, int]]:
+	sticker_frame = read_sticker_frame(sticker_path)
+
+	if sticker_frame is None:
+		return None
+	sticker_height, sticker_width = sticker_frame.shape[:2]
+	sticker_alpha = sticker_frame[:, :, 3:4].astype(numpy.float32) / 255
+	picture_frame = (sticker_frame[:, :, :3].astype(numpy.float32) * sticker_alpha + 255 * (1 - sticker_alpha)).astype(numpy.uint8)
+	# the whole picture stays in view, a blurred and darker copy of it fills the sides
+	cover_scale = max(frame_width / sticker_width, frame_height / sticker_height)
+	cover_frame = cv2.resize(picture_frame, (max(frame_width, round(sticker_width * cover_scale)), max(frame_height, round(sticker_height * cover_scale))), interpolation = cv2.INTER_AREA)
+	cover_y, cover_x = (cover_frame.shape[0] - frame_height) // 2, (cover_frame.shape[1] - frame_width) // 2
+	canvas_frame = cover_frame[cover_y:cover_y + frame_height, cover_x:cover_x + frame_width]
+	canvas_frame = (cv2.GaussianBlur(canvas_frame, (0, 0), max(frame_width, frame_height) / 40) * 0.55).astype(numpy.uint8)
+	fit_scale = min(frame_width / sticker_width, frame_height / sticker_height)
+	fit_width, fit_height = max(1, round(sticker_width * fit_scale)), max(1, round(sticker_height * fit_scale))
+	offset_x, offset_y = (frame_width - fit_width) // 2, (frame_height - fit_height) // 2
+	canvas_frame[offset_y:offset_y + fit_height, offset_x:offset_x + fit_width] = cv2.resize(picture_frame, (fit_width, fit_height), interpolation = cv2.INTER_AREA if fit_scale < 1 else cv2.INTER_CUBIC)
+	return canvas_frame, fit_scale, offset_x, offset_y
+
+
+def paste_inside(temp_vision_frame : VisionFrame, target_face : Optional[Face], face_mapping : FaceMapping) -> VisionFrame:
+	frame_height, frame_width = temp_vision_frame.shape[:2]
+	inside_canvas = create_inside_canvas(face_mapping.get('sticker_path'), frame_width, frame_height)
+
+	if inside_canvas is None:
+		return temp_vision_frame
+	canvas_frame, fit_scale, offset_x, offset_y = inside_canvas
+	inside_frame = canvas_frame.copy()
+
+	# without the person in view the picture stays as it is
+	if target_face is None:
+		return inside_frame
+	sticker_height, sticker_width = read_sticker_frame(face_mapping.get('sticker_path')).shape[:2]
+	points = numpy.array(face_mapping.get('sticker_options').get('points') or INSIDE_DEFAULT_POINTS, dtype = numpy.float32) * [ sticker_width * fit_scale, sticker_height * fit_scale ] + [ offset_x, offset_y ]
+	face_landmark_5 = target_face.landmark_set.get('5').astype(numpy.float32)
+	face_points = { 'left_eye': face_landmark_5[0], 'right_eye': face_landmark_5[1], 'mouth': (face_landmark_5[3] + face_landmark_5[4]) / 2 }
+	face_vector = face_landmark_5[1] - face_landmark_5[0]
+	face_unit = max(float(numpy.linalg.norm(face_vector)), 1.0)
+	picture_vector = points[1] - points[0]
+	picture_unit = max(float(numpy.linalg.norm(picture_vector)), 1.0)
+	# the eyes are laid on the picture's eye line: the head may tilt, the picture does not
+	angle = math.atan2(picture_vector[1], picture_vector[0]) - math.atan2(face_vector[1], face_vector[0])
+	rotation_matrix = numpy.array([ [ math.cos(angle), -math.sin(angle) ], [ math.sin(angle), math.cos(angle) ] ], dtype = numpy.float32) * picture_unit / face_unit
+	face_axis_y = numpy.array([ -face_vector[1], face_vector[0] ], dtype = numpy.float32) / face_unit
+	picture_axis_x = picture_vector / picture_unit
+	picture_axis_y = numpy.array([ -picture_axis_x[1], picture_axis_x[0] ], dtype = numpy.float32)
+
+	for feature_name, point_index, shift_y, half_width, half_height in INSIDE_FEATURES:
+		source_center = face_points.get(feature_name) + face_axis_y * shift_y * face_unit
+		target_center = points[point_index]
+		radius = half_width * picture_unit + 2
+		start_x, start_y = max(0, int(target_center[0] - radius)), max(0, int(target_center[1] - radius))
+		end_x, end_y = min(frame_width, int(target_center[0] + radius) + 1), min(frame_height, int(target_center[1] + radius) + 1)
+
+		if end_x <= start_x or end_y <= start_y:
+			continue
+		affine_matrix = numpy.hstack([ rotation_matrix, (target_center - [ start_x, start_y ] - rotation_matrix @ source_center)[:, None] ])
+		feature_frame = cv2.warpAffine(temp_vision_frame, affine_matrix, (end_x - start_x, end_y - start_y), flags = cv2.INTER_LINEAR, borderMode = cv2.BORDER_REFLECT)
+		grid_y, grid_x = numpy.mgrid[start_y:end_y, start_x:end_x].astype(numpy.float32)
+		delta_x, delta_y = grid_x - target_center[0], grid_y - target_center[1]
+		local_x = (delta_x * picture_axis_x[0] + delta_y * picture_axis_x[1]) / (half_width * picture_unit)
+		local_y = (delta_x * picture_axis_y[0] + delta_y * picture_axis_y[1]) / (half_height * picture_unit)
+		distance = numpy.sqrt(local_x * local_x + local_y * local_y)
+		crop_frame = inside_frame[start_y:end_y, start_x:end_x]
+		feature_frame = harmonize_feature(feature_frame, crop_frame, distance)
+		feature_alpha = numpy.clip((1 - distance) * 2, 0, 1)
+		feature_alpha = (feature_alpha * feature_alpha * (3 - 2 * feature_alpha))[:, :, None]
+		inside_frame[start_y:end_y, start_x:end_x] = (crop_frame * (1 - feature_alpha) + feature_frame * feature_alpha).clip(0, 255).astype(numpy.uint8)
+	return inside_frame
+
+
+def harmonize_feature(feature_frame : VisionFrame, crop_frame : VisionFrame, distance : numpy.ndarray) -> numpy.ndarray:
+	ring_mask = (distance > 0.75) & (distance < 1.25)
+
+	if not numpy.any(ring_mask):
+		return feature_frame.astype(numpy.float32)
+	# the skin around the feature takes the colour of the picture around it, the eye or the lips much less
+	feature_lab = cv2.cvtColor(feature_frame, cv2.COLOR_BGR2LAB).astype(numpy.float32)
+	crop_lab = cv2.cvtColor(crop_frame, cv2.COLOR_BGR2LAB).astype(numpy.float32)
+	colour_shift = (crop_lab[ring_mask].mean(axis = 0) - feature_lab[ring_mask].mean(axis = 0)) * numpy.array([ 0.6, 0.8, 0.8 ], dtype = numpy.float32)
+	shift_weight = 0.45 + 0.55 * numpy.clip((distance - 0.2) / 0.6, 0, 1)
+	feature_lab += colour_shift * shift_weight[:, :, None]
+	return cv2.cvtColor(feature_lab.clip(0, 255).astype(numpy.uint8), cv2.COLOR_LAB2BGR).astype(numpy.float32)
+
+
 def prepare_frames(temp_frame_paths : List[str]) -> None:
 	# videos get one track per person: glitches dropped, short misses bridged, motion smoothed
 	STICKER_TRACKS.clear()
 	face_mappings = get_face_mappings()
-	sticker_mapping_indices = [ index for index, face_mapping in enumerate(face_mappings) if face_mapping.get('sticker_path') ]
 
-	if not sticker_mapping_indices:
+	if not any(face_mapping.get('sticker_path') for face_mapping in face_mappings):
 		return
 
 	# the shared face tracks already hold every detection plus the bridged misses
 	prepare_face_tracks(temp_frame_paths)
+	# a picture the person is inside follows their features frame by frame, no track to smooth
+	sticker_mapping_indices = [ index for index, face_mapping in enumerate(face_mappings) if face_mapping.get('sticker_path') and not is_inside_mapping(face_mapping) ]
 	raw_anchors = numpy.full((len(face_mappings), len(temp_frame_paths), 6), numpy.nan)
 
 	for frame_number, tracked_faces in enumerate(get_tracked_faces()):
@@ -276,6 +377,12 @@ def process_frame(inputs : dict) -> ProcessorOutputs:
 	temp_vision_frame = inputs.get('temp_vision_frame')
 	temp_vision_mask = inputs.get('temp_vision_mask')
 	frame_number = inputs.get('frame_number')
+	inside_mapping = get_inside_mapping()
+
+	# the picture becomes the whole view, its person only lends their eyes and mouth
+	if inside_mapping:
+		inside_face = next((scale_face(target_face, target_vision_frame, temp_vision_frame) for target_face, face_mapping in select_sticker_faces(target_vision_frame) if face_mapping is inside_mapping), None)
+		return paste_inside(temp_vision_frame, inside_face, inside_mapping), temp_vision_mask
 
 	if STICKER_TRACKS and frame_number is not None:
 		face_mappings = get_face_mappings()

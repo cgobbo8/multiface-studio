@@ -711,11 +711,28 @@ function renderFaces()
 function isLiveSticker()
 {
 	const person = people().find(item => item.id === state.adjustPersonId);
-	return !isLive() && state.mode === 'result' && Boolean(person && person.source_kind === 'sticker');
+	return !isLive() && state.mode === 'result' && Boolean(person && person.source_kind === 'sticker' && !person.sticker.inside);
+}
+
+function insidePerson()
+{
+	return people().find(item => item.source_kind === 'sticker' && item.sticker && item.sticker.inside) || null;
 }
 
 function renderStickerLayer()
 {
+	const insideEditor = people().find(item => item.id === state.adjustPersonId && item.source_kind === 'sticker' && item.sticker.inside);
+
+	// a picture the person is inside is never mirrored, it is not a selfie
+	el.frame.classList.toggle('is-inside', Boolean(insidePerson()));
+
+	if (insideEditor && state.mode === 'result')
+	{
+		el.stickerLayer.hidden = false;
+		renderInsidePoints(insideEditor);
+		return;
+	}
+
 	// while adjusting, the engine preview comes without stickers and they are drawn here, live
 	const live = isLiveSticker();
 	const fragment = document.createDocumentFragment();
@@ -770,6 +787,103 @@ function createStickerOverlay(person, anchor)
 
 	node.style.transform = 'perspective(' + perspective + 'px) rotateZ(' + angle + 'deg) rotateX(' + ((anchor.pitch || 0) * depth) + 'deg) rotateY(' + ((anchor.yaw || 0) * depth) + 'deg)' + (options.mirror ? ' scaleX(-1)' : '');
 	return node;
+}
+
+const INSIDE_POINTS =
+[
+	{ label: 'adjust.point_eye' },
+	{ label: 'adjust.point_eye' },
+	{ label: 'adjust.point_mouth' }
+];
+
+function fitInsidePicture(person)
+{
+	// mirrors create_inside_canvas() in the face_sticker processor: the whole picture, centred
+	const frameWidth = target().width;
+	const frameHeight = target().height;
+	const [ pictureWidth, pictureHeight ] = person.sticker_size;
+	const scale = Math.min(frameWidth / pictureWidth, frameHeight / pictureHeight);
+	const width = Math.max(1, Math.round(pictureWidth * scale));
+	const height = Math.max(1, Math.round(pictureHeight * scale));
+
+	return { frameWidth, frameHeight, width, height, left: Math.floor((frameWidth - width) / 2), top: Math.floor((frameHeight - height) / 2) };
+}
+
+function renderInsidePoints(person)
+{
+	const fit = fitInsidePicture(person);
+	const points = person.sticker_points || [];
+	let nodes = [ ...el.stickerLayer.querySelectorAll('.inside-point') ];
+
+	// the nodes stay while the camera redraws, a drag in progress keeps its grip
+	if (nodes.length !== INSIDE_POINTS.length || el.stickerLayer.dataset.personId !== String(person.id))
+	{
+		el.stickerLayer.dataset.personId = person.id;
+		nodes = INSIDE_POINTS.map((point, index) => createInsidePoint(person, index, t(point.label)));
+		el.stickerLayer.replaceChildren(...nodes);
+	}
+	nodes.forEach((node, index) =>
+	{
+		const [ pointX, pointY ] = points[index] || [ 0.5, 0.5 ];
+
+		node.style.left = ((fit.left + pointX * fit.width) / fit.frameWidth * 100) + '%';
+		node.style.top = ((fit.top + pointY * fit.height) / fit.frameHeight * 100) + '%';
+	});
+}
+
+function createInsidePoint(person, index, label)
+{
+	const node = document.createElement('span');
+
+	node.className = 'inside-point';
+	node.dataset.label = label;
+	node.title = label;
+	node.addEventListener('pointerdown', event =>
+	{
+		event.preventDefault();
+		node.setPointerCapture(event.pointerId);
+		node.classList.add('is-dragging');
+	});
+	node.addEventListener('pointermove', event =>
+	{
+		if (!node.hasPointerCapture(event.pointerId))
+		{
+			return;
+		}
+		const current = people().find(item => item.id === person.id) || person;
+		const fit = fitInsidePicture(current);
+		const rect = el.stickerLayer.getBoundingClientRect();
+		const frameX = (event.clientX - rect.left) / rect.width * fit.frameWidth;
+		const frameY = (event.clientY - rect.top) / rect.height * fit.frameHeight;
+		const points = (current.sticker_points || []).map(point => [ ...point ]);
+
+		points[index] = [ Math.min(1, Math.max(0, (frameX - fit.left) / fit.width)), Math.min(1, Math.max(0, (frameY - fit.top) / fit.height)) ];
+		current.sticker_points = points;
+		renderInsidePoints(current);
+	});
+	node.addEventListener('pointerup', event =>
+	{
+		if (node.hasPointerCapture(event.pointerId))
+		{
+			node.releasePointerCapture(event.pointerId);
+		}
+		node.classList.remove('is-dragging');
+		saveInsidePoints(people().find(item => item.id === person.id) || person);
+	});
+	return node;
+}
+
+async function saveInsidePoints(person)
+{
+	try
+	{
+		setSession(await request('POST', '/api/people/' + person.id + '/sticker', { points: person.sticker_points }));
+		invalidatePreview();
+	}
+	catch (error)
+	{
+		handleError(error);
+	}
 }
 
 function onFaceClick(person)
@@ -1164,6 +1278,12 @@ const STICKER_TOGGLES =
 	{ key: 'mirror', label: 'adjust.mirror' }
 ];
 
+const STICKER_PLACEMENTS =
+[
+	{ inside: false, label: 'adjust.on_head' },
+	{ inside: true, label: 'adjust.inside' }
+];
+
 const STICKER_SHAPES =
 [
 	{ value: 'full', label: 'adjust.shape_full', round: false, cutout: false },
@@ -1185,6 +1305,42 @@ function buildAdjustPanel(person)
 	const panel = document.createElement('div');
 
 	panel.className = 'adjust';
+
+	const placements = document.createElement('div');
+
+	placements.className = 'adjust-shapes';
+	placements.innerHTML = '<span>' + escapeHtml(t('adjust.placement')) + '</span>';
+	STICKER_PLACEMENTS.forEach(placement =>
+	{
+		const chip = document.createElement('button');
+
+		chip.className = 'chip' + (Boolean(person.sticker.inside) === placement.inside ? ' is-set' : '');
+		chip.textContent = t(placement.label);
+		chip.addEventListener('click', async () =>
+		{
+			if (Boolean(person.sticker.inside) === placement.inside)
+			{
+				return;
+			}
+			person.sticker.inside = placement.inside;
+			await saveSticker(person, true);
+			// each placement has its own settings
+			renderPeople();
+			renderStickerLayer();
+		});
+		placements.appendChild(chip);
+	});
+	panel.appendChild(placements);
+
+	if (person.sticker.inside)
+	{
+		const hint = document.createElement('p');
+
+		hint.className = 'adjust-hint';
+		hint.textContent = t(isLive() ? 'adjust.inside_hint_live' : 'adjust.inside_hint');
+		panel.appendChild(hint);
+		return panel;
+	}
 	STICKER_SLIDERS.forEach(slider =>
 	{
 		const row = document.createElement('label');

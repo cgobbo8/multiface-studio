@@ -637,6 +637,41 @@ p {
 	pointer-events: none;
 }
 
+.inside-point {
+	position: absolute;
+	width: 26px;
+	height: 26px;
+	margin: -13px 0 0 -13px;
+	border-radius: 50%;
+	border: 2px solid #fff;
+	background: color-mix(in srgb, var(--accent) 45%, transparent);
+	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25), 0 4px 14px rgba(0, 0, 0, 0.35);
+	pointer-events: auto;
+	cursor: grab;
+	touch-action: none;
+	transition: transform 0.2s var(--ease);
+}
+
+.inside-point::after {
+	content: attr(data-label);
+	position: absolute;
+	top: 28px;
+	left: 50%;
+	transform: translateX(-50%);
+	padding: 3px 7px;
+	border-radius: 999px;
+	font: 600 11px/1 var(--font-rounded);
+	color: #fff;
+	white-space: nowrap;
+	background: rgba(20, 20, 24, 0.72);
+	pointer-events: none;
+}
+
+.inside-point.is-dragging {
+	cursor: grabbing;
+	transform: scale(1.18);
+}
+
 .face-sticker {
 	position: absolute;
 	max-width: none;
@@ -1464,6 +1499,13 @@ body.is-armed .slot:hover {
 
 .adjust-shapes span {
 	width: 76px;
+}
+
+.adjust-hint {
+	margin: 6px 0 0;
+	font-size: 11.5px;
+	line-height: 1.45;
+	color: var(--text-secondary);
 }
 
 .adjust-toggles {
@@ -2381,6 +2423,11 @@ body.is-offline .workspace {
 .frame.is-mirrored .live-canvas,
 .frame.is-mirrored .face-layer {
 	transform: scaleX(-1);
+}
+
+/* a picture the person is inside reads the right way round */
+.frame.is-mirrored.is-inside #live-result {
+	transform: none;
 }
 
 .frame.is-mirrored .face-badge,
