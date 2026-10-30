@@ -99,9 +99,37 @@ def count_video_frame_total(video_path : str) -> int:
 		if video_capture and video_capture.isOpened():
 			with thread_semaphore():
 				video_frame_total = int(video_capture.get(cv2.CAP_PROP_FRAME_COUNT))
-				return video_frame_total
+			return count_readable_frame_total(video_path, video_frame_total)
 
 	return 0
+
+
+@lru_cache(maxsize = 16)
+def count_readable_frame_total(video_path : str, video_frame_total : int) -> int:
+	# a video trimmed on a Mac keeps the cut frames behind an edit list: the container still counts them, no decoder returns them
+	if video_frame_total < 1 or is_video_frame_readable(video_path, video_frame_total - 1):
+		return video_frame_total
+
+	readable_frame_total = 0
+	unreadable_frame_number = video_frame_total - 1
+
+	while readable_frame_total < unreadable_frame_number:
+		frame_number = (readable_frame_total + unreadable_frame_number) // 2
+
+		if is_video_frame_readable(video_path, frame_number):
+			readable_frame_total = frame_number + 1
+		else:
+			unreadable_frame_number = frame_number
+	return readable_frame_total
+
+
+def is_video_frame_readable(video_path : str, frame_number : int) -> bool:
+	video_capture = get_video_capture(video_path)
+
+	with thread_semaphore():
+		video_capture.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+		has_vision_frame, _ = video_capture.read()
+	return has_vision_frame
 
 
 def predict_video_frame_total(video_path : str, fps : Fps, trim_frame_start : int, trim_frame_end : int) -> int:
