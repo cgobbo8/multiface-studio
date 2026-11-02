@@ -105,7 +105,9 @@ STICKER_DEFAULT_OPTIONS : Dict[str, Any] =\
 	'mirror': False,
 	'round': False,
 	'cutout': False,
-	'inside': False
+	'inside': False,
+	'eye_scale': 1.0,
+	'mouth_scale': 1.0
 }
 STICKER_OPTION_RANGES : Dict[str, Any] =\
 {
@@ -113,7 +115,9 @@ STICKER_OPTION_RANGES : Dict[str, Any] =\
 	'offset_x': (-2.0, 2.0),
 	'offset_y': (-2.0, 2.0),
 	'rotation': (-180.0, 180.0),
-	'depth': (0.0, 1.0)
+	'depth': (0.0, 1.0),
+	'eye_scale': (0.5, 3.0),
+	'mouth_scale': (0.5, 3.0)
 }
 
 SESSION : Dict[str, Any] =\

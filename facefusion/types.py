@@ -56,7 +56,9 @@ FaceStickerOptions = TypedDict('FaceStickerOptions',
 	'mirror' : bool,
 	'round' : bool,
 	'inside' : bool,
-	'points' : Optional[List[List[float]]]
+	'points' : Optional[List[List[float]]],
+	'eye_scale' : float,
+	'mouth_scale' : float
 })
 FaceMapping = TypedDict('FaceMapping',
 {

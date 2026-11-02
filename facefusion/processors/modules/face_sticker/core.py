@@ -261,8 +261,14 @@ def paste_inside(temp_vision_frame : VisionFrame, target_face : Optional[Face], 
 	face_axis_y = numpy.array([ -face_vector[1], face_vector[0] ], dtype = numpy.float32) / face_unit
 	picture_axis_x = picture_vector / picture_unit
 	picture_axis_y = numpy.array([ -picture_axis_x[1], picture_axis_x[0] ], dtype = numpy.float32)
+	# eyes and mouth can be blown up, their cut grows with them so they stay whole
+	eye_scale = float(face_mapping.get('sticker_options').get('eye_scale') or 1.0)
+	feature_scales = { 'left_eye': eye_scale, 'right_eye': eye_scale, 'mouth': float(face_mapping.get('sticker_options').get('mouth_scale') or 1.0) }
 
 	for feature_name, point_index, shift_y, half_width, half_height in INSIDE_FEATURES:
+		feature_scale = feature_scales.get(feature_name)
+		half_width, half_height = half_width * feature_scale, half_height * feature_scale
+		feature_matrix = rotation_matrix * feature_scale
 		source_center = face_points.get(feature_name) + face_axis_y * shift_y * face_unit
 		target_center = points[point_index]
 		radius = half_width * picture_unit + 2
@@ -271,7 +277,7 @@ def paste_inside(temp_vision_frame : VisionFrame, target_face : Optional[Face], 
 
 		if end_x <= start_x or end_y <= start_y:
 			continue
-		affine_matrix = numpy.hstack([ rotation_matrix, (target_center - [ start_x, start_y ] - rotation_matrix @ source_center)[:, None] ])
+		affine_matrix = numpy.hstack([ feature_matrix, (target_center - [ start_x, start_y ] - feature_matrix @ source_center)[:, None] ])
 		feature_frame = cv2.warpAffine(temp_vision_frame, affine_matrix, (end_x - start_x, end_y - start_y), flags = cv2.INTER_LINEAR, borderMode = cv2.BORDER_REFLECT)
 		grid_y, grid_x = numpy.mgrid[start_y:end_y, start_x:end_x].astype(numpy.float32)
 		delta_x, delta_y = grid_x - target_center[0], grid_y - target_center[1]

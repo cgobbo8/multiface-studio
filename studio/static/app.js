@@ -1272,6 +1272,13 @@ const STICKER_SLIDERS =
 	{ key: 'depth', label: 'adjust.depth', min: 0, max: 1, step: 0.05, format: value => formatPercent(Math.round(value * 100)) }
 ];
 
+// a person inside a picture only sizes the features they lend it
+const INSIDE_SLIDERS =
+[
+	{ key: 'eye_scale', label: 'adjust.eye_scale', min: 0.5, max: 3, step: 0.05, fallback: 1, format: value => formatPercent(Math.round(value * 100)) },
+	{ key: 'mouth_scale', label: 'adjust.mouth_scale', min: 0.5, max: 3, step: 0.05, fallback: 1, format: value => formatPercent(Math.round(value * 100)) }
+];
+
 const STICKER_TOGGLES =
 [
 	{ key: 'follow_rotation', label: 'adjust.follow_rotation' },
@@ -1298,6 +1305,33 @@ function stickerShape(sticker)
 		return 'cutout';
 	}
 	return sticker.round ? 'round' : 'full';
+}
+
+function appendAdjustSliders(panel, person, sliders)
+{
+	sliders.forEach(slider =>
+	{
+		const row = document.createElement('label');
+		const value = person.sticker[slider.key] ?? slider.fallback ?? 0;
+		const shownValue = slider.key === 'offset_y' ? -value : value;
+
+		row.className = 'adjust-row';
+		row.innerHTML = '<span>' + escapeHtml(t(slider.label)) + '</span><input type="range" min="' + slider.min + '" max="' + slider.max + '" step="' + slider.step + '" value="' + shownValue + '"><output>' + slider.format(value) + '</output>';
+		const input = row.querySelector('input');
+		const output = row.querySelector('output');
+
+		input.addEventListener('input', () =>
+		{
+			// the vertical slider reads "up" as positive, the engine offset points down
+			const nextValue = slider.key === 'offset_y' ? -Number(input.value) : Number(input.value);
+
+			person.sticker[slider.key] = nextValue;
+			output.textContent = slider.format(nextValue);
+			renderStickerLayer();
+			saveSticker(person);
+		});
+		panel.appendChild(row);
+	});
 }
 
 function buildAdjustPanel(person)
@@ -1339,31 +1373,10 @@ function buildAdjustPanel(person)
 		hint.className = 'adjust-hint';
 		hint.textContent = t(isLive() ? 'adjust.inside_hint_live' : 'adjust.inside_hint');
 		panel.appendChild(hint);
+		appendAdjustSliders(panel, person, INSIDE_SLIDERS);
 		return panel;
 	}
-	STICKER_SLIDERS.forEach(slider =>
-	{
-		const row = document.createElement('label');
-		const value = person.sticker[slider.key] ?? 0;
-		const shownValue = slider.key === 'offset_y' ? -value : value;
-
-		row.className = 'adjust-row';
-		row.innerHTML = '<span>' + escapeHtml(t(slider.label)) + '</span><input type="range" min="' + slider.min + '" max="' + slider.max + '" step="' + slider.step + '" value="' + shownValue + '"><output>' + slider.format(value) + '</output>';
-		const input = row.querySelector('input');
-		const output = row.querySelector('output');
-
-		input.addEventListener('input', () =>
-		{
-			// the vertical slider reads "up" as positive, the engine offset points down
-			const nextValue = slider.key === 'offset_y' ? -Number(input.value) : Number(input.value);
-
-			person.sticker[slider.key] = nextValue;
-			output.textContent = slider.format(nextValue);
-			renderStickerLayer();
-			saveSticker(person);
-		});
-		panel.appendChild(row);
-	});
+	appendAdjustSliders(panel, person, STICKER_SLIDERS);
 
 	const shapes = document.createElement('div');
 
